@@ -1,43 +1,153 @@
-# dosemu2 builder (Arch + git)
+# dosemu2-container
 
-A phased Docker build of [dosemu2](https://github.com/dosemu2/dosemu2)
-from upstream git on Arch Linux. Each phase produces a checkpointed
-image so re-running the later, more volatile phases (AUR refresh,
-dosemu2 source edit) doesn't redo the earlier, expensive ones (pacman
-install, paru bootstrap, DJGPP toolchain build).
+Docker images of [dosemu2](https://github.com/dosemu2/dosemu2), built
+two ways:
+
+- **`:latest`** — Arch + dosemu2 from upstream git (`devel`), produced
+  by a 5-phase pipeline that also publishes every intermediate builder
+  image.
+- **`:release`** — Ubuntu + dosemu2 from the official PPA, the
+  latest released version.
+
+Both are built and pushed to
+[`ghcr.io/theimpossibleastronaut/dosemu2-container`](https://github.com/theimpossibleastronaut/dosemu2-container/pkgs/container/dosemu2-container).
+
+## Docker is the only build dependency
+
+Everything dosemu2 needs to compile — the Arch base, `paru`, the
+DJGPP cross-compiler toolchain, `fdpp`, `dj64`, `comcom64`,
+`nasm-segelf`, the `libsearpc` runtime, even a `-std=gnu17`-injecting
+gcc wrapper — is built and lives inside the container chain. You
+need Docker on your host and that's it. No global pacman / apt
+install, no Rust toolchain, no AUR helper, no PPA on the host.
+
+## Use the published images
+
+### Pull & run
+
+The runtime images are on GHCR — no compilation needed:
+
+```sh
+# Latest dosemu2 from upstream git (devel branch HEAD at last CI build):
+docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:latest
+
+# Latest released dosemu2 from the Ubuntu PPA:
+docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:release
+```
+
+Pass DOS commands the same way you would to `dosemu` on the host:
+
+```sh
+docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:latest -td -ks -E "ver"
+```
+
+### Build dosemu2 locally against your own source
+
+Pull the `:04-aur` builder image, bind-mount your dosemu2 source,
+and build dosemu2 the usual way (autogen / configure / make) inside
+the container:
+
+```sh
+git clone https://github.com/dosemu2/dosemu2.git ~/src/dosemu2
+
+docker run --rm -it \
+    -v ~/src/dosemu2:/workspace \
+    -w /workspace \
+    ghcr.io/theimpossibleastronaut/dosemu2-container:04-aur
+
+# Inside the container:
+./autogen.sh
+./default-configure
+make -j$(nproc)
+sudo make install        # if you want to run it inside the container
+dosemu                   # try it
+```
+
+The container provides every build dep (Arch toolchain, DJGPP cross
+compiler, fdpp, dj64, libsearpc, etc.); your host only has Docker.
+The bind mount is read-write, so `make`'s `.o` files land in your
+host source tree — same as a native build. If you'd rather keep the
+host source clean, use the Makefile-driven path which untars into an
+internal scratch dir:
+
+```sh
+git clone https://github.com/theimpossibleastronaut/dosemu2-container.git
+cd dosemu2-container
+docker pull ghcr.io/theimpossibleastronaut/dosemu2-container:04-aur
+docker tag  ghcr.io/theimpossibleastronaut/dosemu2-container:04-aur \
+            dosemu2-builder:04-aur
+make rebuild-dosemu2 DOSEMU2_SRC=~/src/dosemu2
+```
+
+UID note: the builder image's `builder` user is UID 1000. If your
+host user is also UID 1000 (typical), bind-mounted files appear with
+matching ownership and there's nothing to do. If not, files the
+container writes will land on the host as UID 1000; either work
+around with `--user "$(id -u):$(id -g)"` on `docker run` or just
+chown after.
+
+## Build from scratch
+
+If you want the whole chain locally (e.g. you're modifying any of
+phases 01–04, or you need an audit trail of every step):
+
+```sh
+make all          # full chain → dosemu2:latest from git
+make release      # PPA-based → dosemu2:release
+```
+
+(`make` is universally available on dev hosts; if you don't have it,
+read it as "run the docker buildx commands in the order the Makefile
+lists.")
+
+## Image map
+
+| Image | Size | Contents |
+|---|---|---|
+| `dosemu2-builder:01-pacman` | 1.4 GB | Arch base + pacman deps + builder user + parallelism config |
+| `dosemu2-builder:02-paru` | 1.4 GB | + `paru` (built from source, not the prebuilt `paru-bin`) |
+| `dosemu2-builder:03-djcrx` | 1.4 GB | + `djgpp-djcrx-bootstrap` to break the djgpp build cycle |
+| `dosemu2-builder:04-aur` | 3.1 GB | + the full DJGPP toolchain, `libsearpc`, `dj64-git`, `fdpp`, `comcom64-git`; built `.pkg.tar.zst` files archived to `/opt/aur-pkgs/` |
+| `dosemu2:latest` | 3.1 GB | **Runtime only.** Slim `archlinux:latest` + dosemu2 from git HEAD + AUR runtime packages. No build toolchain. |
+| `dosemu2:release` | 0.4 GB | **Runtime only.** Slim `ubuntu:24.04` + dosemu2 from the PPA. |
+
+The `dosemu2-builder` images are the *build environment*; the
+`dosemu2` images are the *runtime*. Two separate Docker repos by design
+so `docker images` makes the distinction obvious.
 
 ## Quick start
 
 ```sh
-make all                    # chain through every phase, ~30–60 min first time
-docker compose run --rm shell
-# … inside the container:
-dosemu                      # run the dosemu2 installed during build
-cd /workspace && ./autogen.sh && ./default-configure && make   # rebuild against host source
+# Build the whole git chain (~30–60 min first time; phase 04 is the
+# slow one because it compiles the DJGPP cross-compiler from source).
+make all
+
+# Run dosemu2 (git build).
+docker run --rm -it dosemu2:latest
+
+# Or the released version.
+make release && docker run --rm -it dosemu2:release
+
+# Drop into a shell with the host dosemu2 source mounted at
+# /home/dosuser/src/dosemu2 (read-only).
+make shell
 ```
 
-The host directory `/home/andy/src/dosemu2` is bind-mounted into the
-container at `/workspace` for in-container iteration.
-
-## Phases
-
-| Phase | Tag | What runs | Why split here |
-|---|---|---|---|
-| 01 | `:01-pacman` | Arch base + pacman deps + builder user + parallelism config | Stable. Rarely needs rerunning. |
-| 02 | `:02-paru` | Source-build paru (rust compile) | Stable. Only rerun when paru / libalpm bumps. |
-| 03 | `:03-djcrx` | Install `djgpp-djcrx-bootstrap` | Stable. Breaks the djgpp-djcrx ⇄ djgpp-gcc cycle. |
-| 04 | `:04-aur` | Build & install libsearpc, dj64-git, fdpp, comcom64-git + transitive AUR deps; archive `.pkg.tar.zst` to `/opt/aur-pkgs/` | Rerun monthly when AUR updates. |
-| 05 | `:05-build`, `:latest` | Bind-mount `/home/andy/src/dosemu2`, build dosemu2 | Rerun every time dosemu2 source changes. |
+The host directory `/home/andy/src/dosemu2` (override with
+`DOSEMU2_SRC=...`) is bind-mounted into Phase 05 via BuildKit's
+`additional_contexts` so a Phase 05 rebuild always picks up your
+current source — no `git clone` inside the container.
 
 ## Common workflows
 
 ```sh
-make all              # build the whole chain
+make all              # build the whole git chain
 make 04-aur           # stop at the AUR checkpoint (no dosemu2 build yet)
-make rebuild-dosemu2  # rebuild just phase 05 against current host source
+make release          # build the PPA-based runtime
+make rebuild-dosemu2  # redo phase 05 only against current host source
 make rebuild-aur      # force-rebuild phase 04 (after AUR upstream bumps)
-make shell            # interactive shell in :latest with source mounted RO
-make clean            # remove all dosemu2-builder:* tags
+make shell            # interactive shell in dosemu2:latest
+make clean            # remove every tag this Makefile produces
 ```
 
 ## Overrides
@@ -45,27 +155,61 @@ make clean            # remove all dosemu2-builder:* tags
 All Makefile variables can be set on the command line:
 
 ```sh
-make all IMAGE=myorg/dosemu2-builder JOBS=4 DOSEMU2_SRC=$HOME/work/dosemu2
+make all JOBS=8 DOSEMU2_SRC=$HOME/work/dosemu2
+make all BUILDER_IMAGE=myorg/dosemu2-builder RUNTIME_IMAGE=myorg/dosemu2
 ```
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `IMAGE` | `dosemu2-builder` | Image repo. Each phase tag = `$(IMAGE):NN-name`. |
-| `DOSEMU2_SRC` | `/home/andy/src/dosemu2` | Host path bind-mounted as the dosemu2 source for phase 05. |
-| `JOBS` | _(nproc inside the buildkit builder)_ | Parallelism. Baked into `/etc/makepkg.conf` `MAKEFLAGS`, `/etc/profile.d/jobs.sh` (`MAKEFLAGS`, `JOBS`, `CARGO_BUILD_JOBS`), `/etc/dosemu2-jobs.env`, and `~/.cargo/config.toml`. Covers gcc *and* rust builds. |
+| `BUILDER_IMAGE` | `dosemu2-builder` | Repo for the builder-phase tags (01-04). |
+| `RUNTIME_IMAGE` | `dosemu2` | Repo for the runtime tags (`:latest`, `:release`). |
+| `DOSEMU2_SRC` | `/home/andy/src/dosemu2` | Host path bind-mounted as the dosemu2 source. Must contain `.git/` — the `getversion` script needs it for the rich version string. |
+| `JOBS` | _(nproc inside the buildkit builder)_ | Parallelism. Baked into `/etc/makepkg.conf` `MAKEFLAGS` (for AUR builds), `/etc/profile.d/jobs.sh` and `/etc/dosemu2-jobs.env` (for direct make), and `~/.cargo/config.toml` (for cargo). Covers gcc *and* rust builds. |
+
+## CI / GHCR
+
+- **`.github/workflows/build.yml`** — 5 sequential jobs that build &
+  push the git chain. Each phase `needs:` the previous one so the next
+  job only starts after the prior image is pushed to GHCR. Triggers on
+  push to `trunk` touching any `Dockerfile.0[1-5]*`, monthly cron, and
+  manual dispatch.
+- **`.github/workflows/build-release.yml`** — independent job for the
+  PPA-based `:release`. Triggers on push to `trunk` touching
+  `Dockerfile.release`, weekly cron, and manual dispatch.
+
+Both push to `ghcr.io/theimpossibleastronaut/dosemu2-container:*`
+using `GITHUB_TOKEN` (no manual secret needed for GHCR push from a
+workflow in the same repo).
 
 ## Internals worth knowing
 
 - **paru, not paru-bin.** paru-bin's prebuilt binary is pinned to a
   specific `libalpm.so.N` and breaks whenever rolling Arch bumps
   pacman's ABI. The source compile is slower once but stable.
+- **`djgpp-djcrx` build cycle.** `djgpp-djcrx` makedepends on
+  `djgpp-gcc`, but `djgpp-gcc` runtime-depends on `djgpp-djcrx`. Phase
+  03 installs `djgpp-djcrx-bootstrap` (which `provides=djgpp-djcrx`)
+  to satisfy `djgpp-gcc`'s dep at build time; Phase 04 then replaces
+  it with the full `djgpp-djcrx` after `djgpp-gcc` is up.
+- **gcc-14 standard wrapper.** `djgpp-djcrx 2.05` ships K&R-style
+  empty-paren function declarations that rolling Arch's gcc 16+
+  rejects under C23. Its PKGBUILD strips any `-std=gnu17` we'd add to
+  `CFLAGS` via `options=('!buildflags')`. Phase 04 step 2 installs a
+  `/usr/local/bin/gcc` wrapper that forces `-std=gnu17`; PATH puts it
+  ahead of `/usr/bin/gcc` so anything resolving `gcc` or `cc` picks it
+  up.
+- **comcom64-git replaces comcom32.** Phase 04 step 1 pulls in `comcom32`
+  as a transitive runtime dep of fdpp; step 3 removes it explicitly
+  with `pacman -Rdd` before installing `comcom64-git` (they both
+  `provide=comcom64` so pacman refuses to coexist).
 - **`/opt/aur-pkgs/`** holds the built AUR packages (`.pkg.tar.zst`)
-  after phase 04. They're not under `~/.cache/paru` (which `paru -Sc`
-  would clear) so the layer that produced them is the canonical cache.
+  archived inside the `:04-aur` image. The runtime stage of Phase 05
+  copies the archive over and `pacman -U`s them, avoiding any AUR
+  rebuild in the slim runtime.
 - **Source mount is read-only at build time.** Phase 05 untars the
-  source into `/home/builder/dosemu2` inside the image before running
-  `autogen.sh` / `configure` / `make`, so your host working tree
-  doesn't get polluted with `.o` files or generated autoconf output.
+  source (`.git` included) into `/home/builder/dosemu2` inside the
+  builder stage before running `autogen.sh` / `configure` / `make`,
+  so your host working tree doesn't get polluted with `.o` files.
 - **Why the JOBS/MAKEFLAGS dance.** makepkg overrides `MAKEFLAGS` from
   its own config and ignores the environment, so editing
   `/etc/makepkg.conf` is required for AUR build parallelism. The env
@@ -75,9 +219,10 @@ make all IMAGE=myorg/dosemu2-builder JOBS=4 DOSEMU2_SRC=$HOME/work/dosemu2
 
 ## docker-compose
 
-`docker-compose.yml` defines two services that consume `:latest`:
+`docker-compose.yml` defines services that consume `dosemu2:latest`:
 
 - `dosemu2` — `ENTRYPOINT ["dosemu"]`; `docker compose run --rm dosemu2` starts dosemu2 in a terminal.
 - `shell` — interactive bash with `/workspace` = your host source, for rebuild iteration inside the container.
 
-Both mount the host source RW at `/workspace` (override via `DOSEMU2_SRC` env) and a named volume at `~/.dosemu` for DOS persistence.
+Both mount the host source at `/workspace` (override via `DOSEMU2_SRC`
+env) and a named volume at `~/.dosemu` for DOS persistence.
