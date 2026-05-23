@@ -1,0 +1,30 @@
+services:
+  # Run the built dosemu2 interactively in a terminal session.
+  # The image must already have been built via `make all`.
+  dosemu2:
+    image: ${IMAGE:-dosemu2-builder}:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      # The host dosemu2 source is bind-mounted so you can rebuild
+      # against fresh source from inside the container — e.g. after
+      # editing on the host, `make` inside /workspace then run dosemu.
+      - ${DOSEMU2_SRC:-/home/andy/src/dosemu2}:/workspace:rw
+      # Per-user DOS files / config / boot log persistence.
+      - ${DOSEMU_HOME:-dosemu-home}:/home/builder/.dosemu
+    working_dir: /home/builder
+
+  # Drop into an interactive shell in the same image, with the same
+  # mounts, for iterating on the build inside the container.
+  shell:
+    image: ${IMAGE:-dosemu2-builder}:latest
+    stdin_open: true
+    tty: true
+    entrypoint: /bin/bash
+    volumes:
+      - ${DOSEMU2_SRC:-/home/andy/src/dosemu2}:/workspace:rw
+      - ${DOSEMU_HOME:-dosemu-home}:/home/builder/.dosemu
+    working_dir: /workspace
+
+volumes:
+  dosemu-home:

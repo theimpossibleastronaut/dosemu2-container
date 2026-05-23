@@ -1,0 +1,53 @@
+# syntax=docker/dockerfile:1.6
+#
+# Latest released dosemu2 from the upstream Ubuntu PPA.
+# Tag: ghcr.io/theimpossibleastronaut/dosemu2-container:release
+#
+# Tracks whatever version the dosemu2 PPA currently ships
+# (~2.0pre9 family at time of writing). Build is fast (~2 min)
+# because it's just apt-get install.
+#
+# Multi-stage: the builder runs add-apt-repository to register the
+# PPA, which requires software-properties-common + gnupg + their
+# transitive python/dirmngr/etc. dependencies. The runtime stage
+# carries forward only the PPA sources + key file from the builder,
+# so the final image doesn't ship those bootstrap packages.
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder — register the PPA
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04 AS builder
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        software-properties-common gnupg ca-certificates \
+ && add-apt-repository -y ppa:dosemu2/ppa
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Refresh ca-certificates BEFORE enabling the PPA — the base image's
+# bundle is old enough that launchpadcontent.net's Let's Encrypt
+# chain doesn't validate, and apt-get update fails on the PPA's
+# HTTPS InRelease fetch otherwise.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates
+
+# Now carry forward the PPA source list and signing key.
+COPY --from=builder /etc/apt/sources.list.d/ /etc/apt/sources.list.d/
+COPY --from=builder /etc/apt/trusted.gpg.d/ /etc/apt/trusted.gpg.d/
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends dosemu2 comcom32 \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash dosuser \
+ && install -d -m 0755 -o dosuser -g users /home/dosuser/.dosemu
+
+USER dosuser
+WORKDIR /home/dosuser
+ENTRYPOINT ["dosemu"]

@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 03 — break the DJGPP build cycle by installing djgpp-djcrx-bootstrap.
+#
+# Input:  dosemu2-builder:02-paru
+# Output: dosemu2-builder:03-djcrx
+#
+# Multi-stage: builder runs paru -S to compile the bootstrap pkg with
+# whatever makedeps it pulls in; final stage starts clean and just
+# pacman -U's the resulting .pkg.tar.zst. /opt/aur-pkgs from the input
+# image (paru's archive) is carried forward.
+#
+# djgpp-djcrx makedepends on djgpp-gcc, but djgpp-gcc depends on
+# djgpp-djcrx at runtime. paru sees the cycle and bails. AUR ships
+# djgpp-djcrx-bootstrap (provides=djgpp-djcrx) which builds against
+# just the host gcc; installing it first satisfies djgpp-gcc's djcrx
+# dep so the main paru -S in the next phase can proceed. The full
+# djgpp-djcrx replaces the bootstrap during Phase 04's installs.
+
+ARG BASE=dosemu2-builder:02-paru
+
+FROM ${BASE} AS builder
+RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \
+ && paru -S --noconfirm --needed --skipreview djgpp-djcrx-bootstrap \
+ && find /home/builder/.cache/paru/clone -maxdepth 3 \
+        -name '*.pkg.tar.zst' -not -name '*-debug-*' \
+        -exec cp -t /opt/aur-pkgs {} +
+
+FROM ${BASE}
+COPY --from=builder --chown=builder:builder /opt/aur-pkgs /opt/aur-pkgs
+RUN sudo pacman -U --noconfirm /opt/aur-pkgs/djgpp-djcrx-bootstrap-*.pkg.tar.zst

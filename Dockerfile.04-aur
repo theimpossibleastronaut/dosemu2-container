@@ -1,0 +1,114 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 04 — build & install the AUR deps dosemu2 links against.
+#
+# Input:  dosemu2-builder:03-djcrx
+# Output: dosemu2-builder:04-aur
+#
+# Multi-stage. The builder stage runs paru -S on the four target leaves
+# (libsearpc, dj64-git, fdpp, comcom64-git); paru resolves the full
+# transitive AUR set (djgpp-gcc — yes, a from-scratch gcc 14 compile —
+# djgpp-binutils, djstub-git, thunk_gen-git, smallerc, lfanew-git,
+# nasm-segelf-git, i386-elf-binutils, ...). All those build artifacts,
+# downloaded source tarballs, ccache directories, and intermediate .o
+# files stay in the builder stage and get thrown away.
+#
+# The final stage starts from the same clean Phase 03 base and just
+# `pacman -U`'s the produced .pkg.tar.zst archives — saving ~1–2 GB
+# of build-only state that we'd otherwise carry forward in the image.
+#
+# /opt/aur-pkgs accumulates: it inherits the paru + djcrx archives
+# from earlier phases and adds the new ones built here.
+
+ARG BASE=dosemu2-builder:03-djcrx
+
+FROM ${BASE} AS builder
+# --mflags=--nocheck:
+#   * nasm-segelf-git's check() runs perl test scripts (iftoken.pl,
+#     etc.) whose syntax is incompatible with perl 5.40+ on rolling
+#     Arch — upstream bug, not anything we can fix here.
+#   * comcom-git separately trips pacman 7.1's makepkg trap handler
+#     ("logpipe: unbound variable") in a way that disappears when
+#     check() is skipped.
+#   The actual build steps still run, so the resulting .pkg.tar.zst
+#   files are functional.
+# Step 1: build everything that needs djgpp-djcrx (which is currently
+# satisfied by the bootstrap from Phase 03). Excludes comcom64-git —
+# its prepare() explicitly errors out if djgpp-djcrx-bootstrap is
+# installed, which in turn trips a separate makepkg "RED: unbound
+# variable" / "logpipe: unbound variable" regression in pacman 7.1.
+#
+# djgpp-gcc is in the target list explicitly because it's only pulled
+# in as a makedep of comcom-git (which we're deferring) — and Step 2
+# needs djgpp-gcc installed so it can build the full djgpp-djcrx (which
+# makedepends on djgpp-gcc, which depends on djgpp-djcrx, etc. — the
+# cycle is broken because the bootstrap is still installed *now*).
+RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \
+ && paru -S --noconfirm --needed --skipreview --mflags=--nocheck \
+        djgpp-gcc libsearpc dj64-git fdpp
+
+# Step 2: replace djgpp-djcrx-bootstrap with the full djgpp-djcrx.
+# paru/pacman refuse to auto-resolve conflicts under --noconfirm, so
+# we remove the bootstrap explicitly with -Rdd (skipping dep checks —
+# djgpp-gcc nominally depends on djgpp-djcrx but the full pkg is
+# coming right after) and then install the real djgpp-djcrx.
+#
+# djgpp-djcrx 2.05 ships djasm.y with K&R-style empty-paren function
+# declarations (`void sortsyms();`) that rolling Arch's gcc 16+ rejects
+# as type errors under its default C23 standard. Its PKGBUILD has
+# options=('!buildflags'), which strips any CFLAGS we'd inject via
+# makepkg.conf, AND gcc-ada is pinned to the current gcc version so
+# we can't downgrade gcc via ALA without breaking it.
+#
+# Workaround: shadow /usr/bin/{gcc,cc} with thin wrappers in
+# /usr/local/bin that force -std=gnu17. PATH on Arch puts
+# /usr/local/bin before /usr/bin, so anything that invokes `cc` or
+# `gcc` picks up the wrapper. !buildflags can strip CFLAGS but not
+# PATH-resolved compiler binaries. The wrappers stay in place for
+# Step 3 too, which is harmless — gnu17 is exactly what gcc 14
+# defaults to anyway.
+RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \
+ && printf '#!/bin/sh\nexec /usr/bin/gcc -std=gnu17 "$@"\n' \
+        | sudo tee /usr/local/bin/gcc > /dev/null \
+ && sudo cp /usr/local/bin/gcc /usr/local/bin/cc \
+ && sudo chmod +x /usr/local/bin/gcc /usr/local/bin/cc \
+ && sudo pacman -Rdd --noconfirm djgpp-djcrx-bootstrap \
+ && paru -S --noconfirm --skipreview --mflags=--nocheck djgpp-djcrx
+
+# Step 3: build & install comcom64-git (the runtime command.com that
+# fdpp boots). The pkgbase is `comcom-git` (a split PKGBUILD that also
+# produces comcom-common-git and comcom32-git); comcom64-git depends
+# on comcom-common which only comcom-common-git provides, so both
+# are installed. comcom32-git is deliberately omitted because Step 1
+# already installed `comcom32` (pulled in by fdpp as a provider of
+# `comcom64`), and the new git versions of both also provide
+# `comcom64` — pacman refuses the install while comcom32 is still
+# there. We remove comcom32 explicitly with -Rdd (skipping dep
+# checks; fdpp's runtime dep on `comcom64` gets re-satisfied by
+# comcom64-git in the same transaction).
+RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \
+ && sudo pacman -Rdd --noconfirm comcom32 \
+ && paru -S --noconfirm --needed --skipreview --mflags=--nocheck \
+        comcom-common-git comcom64-git
+
+# Collect every .pkg.tar.zst paru produced into /opt/aur-pkgs.
+# Exclude:
+#   *-debug-*           — debug-symbol pkgs we don't need at runtime
+#   comcom32-[0-9]*     — the non-git comcom32 that Step 1 transitively
+#                         pulled in but Step 3 then uninstalled (it
+#                         conflicts with comcom64-git as both provide
+#                         `comcom64`; we want only comcom64-git in the
+#                         archive). The [0-9]* anchor avoids matching
+#                         comcom32-git-* (not present, but defensive).
+RUN find /home/builder/.cache/paru/clone -maxdepth 3 \
+        -name '*.pkg.tar.zst' \
+        -not -name '*-debug-*' \
+        -not -name 'comcom32-[0-9]*' \
+        -exec cp -t /opt/aur-pkgs {} +
+
+FROM ${BASE}
+COPY --from=builder --chown=builder:builder /opt/aur-pkgs /opt/aur-pkgs
+# pacman -U all archives at once so it can sort install order from
+# inter-package deps. Already-installed packages (paru, djcrx) get a
+# harmless re-install.
+RUN sudo pacman -U --noconfirm /opt/aur-pkgs/*.pkg.tar.zst

@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 05 — build dosemu2 from a bind-mounted local source tree, with
+# a slim Arch runtime as the final stage.
+#
+# Input:   dosemu2-builder:04-aur (Arch + paru + all AUR dependencies)
+# Outputs: dosemu2-builder:05-build, dosemu2-builder:latest
+#
+# Two stages:
+#   builder  — full :04-aur env. Untars host source (passed via
+#              additional_contexts=dosemu2), autogen + configure +
+#              make + make install DESTDIR=/install.
+#   runtime  — fresh archlinux:latest base. Installs the runtime libs
+#              dosemu2 needs (subset of Phase 01's pacman list, minus
+#              the -dev/build-only ones), pacman -U's the AUR pkgs
+#              archived in /opt/aur-pkgs of :04-aur, then COPYs the
+#              /install tree from the builder.
+#
+# Net: the published image drops the rust toolchain, the DJGPP cross
+# compiler build artifacts, paru source, ccache, and everything else
+# that mattered only during build. ~1-2 GB smaller than just
+# `FROM :04-aur && make install`.
+
+ARG BASE=dosemu2-builder:04-aur
+
+# ---------------------------------------------------------------------------
+# Stage 1: builder
+# ---------------------------------------------------------------------------
+FROM ${BASE} AS builder
+
+# rsync makes the host-source untar cleaner than cp -a; install it
+# inside this stage only.
+USER root
+RUN pacman -Sy --noconfirm --needed rsync && pacman -Scc --noconfirm
+USER builder
+
+# Bind-mount host source RO, untar into a writable scratch dir so the
+# build doesn't pollute the host with .o files / autogen output. We
+# DO include .git — dosemu2's `getversion` script falls back to the
+# static VERSION file when there's no git history, so excluding it
+# leaves the built binary reporting the last release tag instead of
+# the actual git-described version. The extra .git size only affects
+# the builder stage; the runtime stage just COPYs /install over.
+# make install DESTDIR=/install stages the install tree at a known
+# location for the runtime stage to copy.
+RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
+    . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \
+ && rm -rf /home/builder/dosemu2 \
+ && mkdir -p /home/builder/dosemu2 \
+ && (cd /src && tar -cf - .) | tar -xf - -C /home/builder/dosemu2 \
+ && cd /home/builder/dosemu2 \
+ && ./autogen.sh \
+ && ./default-configure \
+ && make \
+ && sudo make install DESTDIR=/install
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime
+# ---------------------------------------------------------------------------
+FROM archlinux:latest
+
+# Runtime libraries only — no -dev, no compilers. Mirrors the
+# linkage-time deps of dosemu2.bin plus the AUR runtime libs
+# (libsearpc, libfdpp, libdj64, etc.). gcc-libs is pulled in
+# implicitly via libstdc++/etc dependencies.
+RUN pacman -Syu --noconfirm --needed \
+        bash \
+        fontconfig libb64 libieee1284 libslirp json-c jansson readline \
+        libcap libxext libx11 acl alsa-lib glib2 libelf \
+        sdl3 slang libao fluidsynth ladspa gpm \
+ && pacman -Scc --noconfirm
+
+# Install the AUR-built packages from Phase 04's archive.
+COPY --from=builder /opt/aur-pkgs /tmp/aur-pkgs
+RUN pacman -U --noconfirm /tmp/aur-pkgs/*.pkg.tar.zst \
+ && rm -rf /tmp/aur-pkgs
+
+# archlinux:latest ships /usr/local/share/man as a symlink to ../man.
+# dosemu2's install tree contains a real /usr/local/share/man directory,
+# and Docker's COPY can't merge a directory into a symlink target.
+# Remove the symlink so COPY can create the directory.
+RUN rm -f /usr/local/share/man
+
+# Drop dosemu2's install tree onto the root filesystem.
+COPY --from=builder /install /
+
+# /usr/local/lib isn't on Arch's default ld.so search path.
+RUN echo /usr/local/lib > /etc/ld.so.conf.d/dosemu2.conf && ldconfig
+
+RUN useradd -m -s /bin/bash dosuser \
+ && install -d -m 0755 -o dosuser -g users /home/dosuser/.dosemu
+
+USER dosuser
+WORKDIR /home/dosuser
+ENTRYPOINT ["dosemu"]

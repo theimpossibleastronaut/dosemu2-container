@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 01 — official Arch packages + builder user + parallelism config.
+#
+# Output image: dosemu2-builder:01-pacman
+#
+# Stable layer. Rarely needs rebuilding (only when Arch base or the
+# upstream dosemu2-git PKGBUILD's pacman-side dep list changes).
+
+FROM archlinux:base-devel
+
+ARG JOBS=
+
+# Mirror the dosemu2-git PKGBUILD's depends + optdepends list, adjusted
+# for upstream's SDL3 requirement (sdl3, not sdl2). base-devel already
+# brings gcc, make, autoconf, automake, binutils, bison, flex, perl,
+# sed.
+RUN pacman -Syu --noconfirm --needed \
+        git sudo bash unzip upx \
+        fontconfig libb64 libieee1284 libslirp json-c jansson readline \
+        libcap libxext libx11 acl alsa-lib glib2 libelf \
+        sdl3 slang libao fluidsynth ladspa gpm \
+ && pacman -Scc --noconfirm
+
+# makepkg refuses to run as root; the builder user needs passwordless
+# sudo so makepkg's --syncdeps/--install steps can call pacman.
+RUN useradd -m -G wheel -s /bin/bash builder \
+ && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+
+# Resolve JOBS once at build time and bake the value into:
+#   /etc/makepkg.conf       — only place makepkg honors MAKEFLAGS
+#   /etc/profile.d/jobs.sh  — interactive shells get exported vars
+#   /etc/dosemu2-jobs.env   — sourced by later RUN steps
+#   ~/.cargo/config.toml    — fallback for cargo if env scrubbed
+RUN J="${JOBS:-$(nproc)}" \
+ && echo "Configuring builds for -j${J}" \
+ && sed -i "s|^#MAKEFLAGS=.*|MAKEFLAGS=\"-j${J}\"|" /etc/makepkg.conf \
+ && printf 'export MAKEFLAGS=-j%s\nexport JOBS=%s\nexport CARGO_BUILD_JOBS=%s\n' \
+        "${J}" "${J}" "${J}" \
+        > /etc/profile.d/jobs.sh \
+ && chmod +x /etc/profile.d/jobs.sh \
+ && printf 'MAKEFLAGS=-j%s\nJOBS=%s\nCARGO_BUILD_JOBS=%s\n' \
+        "${J}" "${J}" "${J}" \
+        > /etc/dosemu2-jobs.env \
+ && install -d -o builder -g builder /home/builder/.cargo \
+ && printf '[build]\njobs = %s\n' "${J}" \
+        > /home/builder/.cargo/config.toml \
+ && chown builder:builder /home/builder/.cargo/config.toml
+
+USER builder
+WORKDIR /home/builder

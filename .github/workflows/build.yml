@@ -1,0 +1,169 @@
+name: Build & push the git chain
+
+# Builds the 5-phase Arch chain and pushes every phase to GHCR:
+#   :01-pacman → :02-paru → :03-djcrx → :04-aur → :latest
+#
+# Each phase is a separate job that `needs:` the previous one, so a
+# later job only starts after the earlier image has actually been
+# pushed to GHCR (and is therefore pullable as the next phase's BASE).
+# Failed phases can be re-run individually from the Actions UI.
+#
+# The PPA-based :release image is built independently — see
+# build-release.yml.
+
+on:
+  push:
+    branches: [trunk]
+    paths:
+      - 'Dockerfile.01-pacman'
+      - 'Dockerfile.02-paru'
+      - 'Dockerfile.03-djcrx'
+      - 'Dockerfile.04-aur'
+      - 'Dockerfile.05-build'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'dosemu2 git ref to build for :latest (branch, tag, or SHA)'
+        required: false
+        default: 'devel'
+  schedule:
+    # Monthly. Phase 04 takes ~30 min for the djgpp toolchain compile;
+    # don't rerun more often than necessary.
+    - cron: '30 5 1 * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build-01-pacman:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push :01-pacman
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.01-pacman
+          push: true
+          tags: ${{ env.IMAGE }}:01-pacman
+          cache-from: type=registry,ref=${{ env.IMAGE }}:01-pacman
+          cache-to: type=inline
+
+  build-02-paru:
+    runs-on: ubuntu-24.04
+    needs: build-01-pacman
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push :02-paru
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.02-paru
+          push: true
+          build-args: BASE=${{ env.IMAGE }}:01-pacman
+          tags: ${{ env.IMAGE }}:02-paru
+          cache-from: type=registry,ref=${{ env.IMAGE }}:02-paru
+          cache-to: type=inline
+
+  build-03-djcrx:
+    runs-on: ubuntu-24.04
+    needs: build-02-paru
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push :03-djcrx
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.03-djcrx
+          push: true
+          build-args: BASE=${{ env.IMAGE }}:02-paru
+          tags: ${{ env.IMAGE }}:03-djcrx
+          cache-from: type=registry,ref=${{ env.IMAGE }}:03-djcrx
+          cache-to: type=inline
+
+  build-04-aur:
+    runs-on: ubuntu-24.04
+    needs: build-03-djcrx
+    steps:
+      - uses: actions/checkout@v6
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push :04-aur
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.04-aur
+          push: true
+          build-args: BASE=${{ env.IMAGE }}:03-djcrx
+          tags: ${{ env.IMAGE }}:04-aur
+          cache-from: type=registry,ref=${{ env.IMAGE }}:04-aur
+          cache-to: type=inline
+
+  build-latest:
+    runs-on: ubuntu-24.04
+    needs: build-04-aur
+    env:
+      DOSEMU2_REF: ${{ inputs.ref || 'devel' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Clone dosemu2 (${{ env.DOSEMU2_REF }})
+        # No --depth=1: the dosemu2 build's getversion script needs git
+        # history to embed the rich "2.0pre9-dev-DATE-N-gSHA" version
+        # string. With a shallow clone, getversion falls back to the
+        # VERSION file (just "2.0pre9").
+        run: |
+          git clone --branch "${DOSEMU2_REF}" \
+            https://github.com/dosemu2/dosemu2.git dosemu2-src
+          echo "Built from $(cd dosemu2-src && git rev-parse HEAD)"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push :latest
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.05-build
+          push: true
+          build-args: BASE=${{ env.IMAGE }}:04-aur
+          build-contexts: |
+            dosemu2=./dosemu2-src
+          tags: ${{ env.IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.IMAGE }}:latest
+          cache-to: type=inline

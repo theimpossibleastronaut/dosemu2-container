@@ -1,0 +1,30 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 02 — bootstrap paru (the AUR helper) from source.
+#
+# Input:  dosemu2-builder:01-pacman
+# Output: dosemu2-builder:02-paru
+#
+# Multi-stage: the builder stage installs the rust toolchain + various
+# makedeps just to compile paru, then archives the resulting paru
+# .pkg.tar.zst. The final stage starts from the same clean base, copies
+# in the archive, and `pacman -U`'s paru — leaving the rust toolchain
+# (and other build-only deps) out of the final image.
+#
+# Source paru, not paru-bin. paru-bin's prebuilt binary is pinned to a
+# specific libalpm.so.N and breaks whenever rolling Arch bumps pacman's
+# ABI. The source build compiles against the currently installed
+# libalpm — slower once (rust compile), but stable.
+
+ARG BASE=dosemu2-builder:01-pacman
+
+FROM ${BASE} AS builder
+RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \
+ && git clone --depth=1 https://aur.archlinux.org/paru.git /tmp/paru \
+ && (cd /tmp/paru && makepkg --noconfirm --syncdeps --needed) \
+ && sudo install -d -o builder -g builder /opt/aur-pkgs \
+ && cp /tmp/paru/paru-*.pkg.tar.zst /opt/aur-pkgs/
+
+FROM ${BASE}
+COPY --from=builder --chown=builder:builder /opt/aur-pkgs /opt/aur-pkgs
+RUN sudo pacman -U --noconfirm /opt/aur-pkgs/paru-*.pkg.tar.zst
