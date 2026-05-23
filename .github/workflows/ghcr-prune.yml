@@ -1,0 +1,53 @@
+name: Prune untagged GHCR images
+
+# Weekly cleanup of untagged versions of
+# ghcr.io/theimpossibleastronaut/dosemu2-container.
+#
+# Untagged versions accumulate every time a build pushes a new digest
+# for an existing tag (e.g. each weekly :latest rebuild leaves the
+# previous :latest's old digest behind, now untagged). Tagged versions
+# are NEVER touched — only versions with an empty `tags` array are
+# deleted.
+#
+# Auth: uses the workflow's GITHUB_TOKEN by default. If you get a 403
+# from the DELETE call, the most likely cause is the repo's default
+# workflow token permission being read-only — flip Settings → Actions
+# → General → "Workflow permissions" to "Read and write", or fall
+# back to a PAT with `delete:packages` scope by setting the
+# GHCR_PRUNE_TOKEN secret. The `GH_TOKEN` env below picks up the PAT
+# automatically if it's set.
+
+on:
+  schedule:
+    - cron: '0 4 * * 0'  # weekly, Sunday 04:00 UTC
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN || secrets.GITHUB_TOKEN }}
+      PKG: ${{ github.event.repository.name }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: List & delete untagged versions
+        run: |
+          set -euo pipefail
+
+          gh api --paginate \
+            "/orgs/${OWNER}/packages/container/${PKG}/versions" \
+            --jq '.[] | select(.metadata.container.tags | length == 0) | .id' \
+            > untagged.txt
+
+          count=$(wc -l < untagged.txt)
+          echo "Found ${count} untagged version(s)."
+
+          while read -r id; do
+            [ -z "$id" ] && continue
+            echo "deleting version $id"
+            gh api --method DELETE \
+              "/orgs/${OWNER}/packages/container/${PKG}/versions/${id}"
+          done < untagged.txt
