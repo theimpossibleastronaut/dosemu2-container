@@ -47,7 +47,7 @@ FROM ${BASE} AS builder
 # cycle is broken because the bootstrap is still installed *now*).
 RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \
  && paru -S --noconfirm --needed --skipreview --mflags=--nocheck \
-        djgpp-gcc libsearpc dj64-git fdpp
+        djgpp-gcc libsearpc dj64-git fdpp munt
 
 # Step 2: replace djgpp-djcrx-bootstrap with the full djgpp-djcrx.
 # paru/pacman refuse to auto-resolve conflicts under --noconfirm, so

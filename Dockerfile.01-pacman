@@ -20,6 +20,14 @@ RUN pacman -Syu --noconfirm --needed \
         fontconfig libb64 libieee1284 libslirp json-c jansson readline \
         libcap libxext libx11 acl alsa-lib glib2 libelf \
         sdl3 slang libao fluidsynth ladspa gpm \
+        \
+        `# Optional deps that dosemu2's configure picks up if present:` \
+        swh-plugins             `# /usr/lib/ladspa/filter.so etc.` \
+        xorg-mkfontscale        `# mkfontscale, replaces old mkfontdir` \
+        xorg-bdftopcf           `# BDF→PCF for X fonts during build` \
+        vde2                    `# alt networking backend` \
+        libsamplerate           `# SDL audio resampling` \
+        soundfont-fluid         `# default FluidR3 soundfont for MIDI` \
  && pacman -Scc --noconfirm
 
 # makepkg refuses to run as root; the builder user needs passwordless
