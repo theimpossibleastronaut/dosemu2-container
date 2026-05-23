@@ -21,7 +21,9 @@
 # that mattered only during build. ~1-2 GB smaller than just
 # `FROM :04-aur && make install`.
 
-ARG BASE=dosemu2-builder:04-aur
+# Default BASE points at the published GHCR image; Makefile overrides
+# with dosemu2-builder:04-aur for local-only chained builds.
+ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:04-aur
 
 # ---------------------------------------------------------------------------
 # Stage 1: builder

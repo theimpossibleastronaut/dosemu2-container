@@ -17,7 +17,9 @@
 # dep so the main paru -S in the next phase can proceed. The full
 # djgpp-djcrx replaces the bootstrap during Phase 04's installs.
 
-ARG BASE=dosemu2-builder:02-paru
+# Default BASE points at the published GHCR image; Makefile overrides
+# with dosemu2-builder:02-paru for local-only chained builds.
+ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:02-paru
 
 FROM ${BASE} AS builder
 RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \

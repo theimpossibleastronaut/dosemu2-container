@@ -67,17 +67,22 @@ The container provides every build dep (Arch toolchain, DJGPP cross
 compiler, fdpp, dj64, libsearpc, etc.); your host only has Docker.
 The bind mount is read-write, so `make`'s `.o` files land in your
 host source tree — same as a native build. If you'd rather keep the
-host source clean, use the Makefile-driven path which untars into an
+host source clean, clone this repo and let Phase 05 untar into an
 internal scratch dir:
 
 ```sh
 git clone https://github.com/theimpossibleastronaut/dosemu2-container.git
 cd dosemu2-container
-docker pull ghcr.io/theimpossibleastronaut/dosemu2-container:04-aur
-docker tag  ghcr.io/theimpossibleastronaut/dosemu2-container:04-aur \
-            dosemu2-builder:04-aur
-make rebuild-dosemu2 DOSEMU2_SRC=~/src/dosemu2
+docker buildx build --builder default --load \
+    --build-context dosemu2=~/src/dosemu2 \
+    -f Dockerfile.05-build \
+    -t dosemu2:latest \
+    .
 ```
+
+The Dockerfiles default their `BASE` to the published GHCR images,
+so the `:04-aur` builder gets pulled automatically — no `docker pull`
+or local tag needed.
 
 UID note: the builder image's `builder` user is UID 1000. If your
 host user is also UID 1000 (typical), bind-mounted files appear with
@@ -164,7 +169,7 @@ make all BUILDER_IMAGE=myorg/dosemu2-builder RUNTIME_IMAGE=myorg/dosemu2
 | `BUILDER_IMAGE` | `dosemu2-builder` | Repo for the builder-phase tags (01-04). |
 | `RUNTIME_IMAGE` | `dosemu2` | Repo for the runtime tags (`:latest`, `:release`). |
 | `DOSEMU2_SRC` | `/home/andy/src/dosemu2` | Host path bind-mounted as the dosemu2 source. Must contain `.git/` — the `getversion` script needs it for the rich version string. |
-| `JOBS` | _(nproc inside the buildkit builder)_ | Parallelism. Baked into `/etc/makepkg.conf` `MAKEFLAGS` (for AUR builds), `/etc/profile.d/jobs.sh` and `/etc/dosemu2-jobs.env` (for direct make), and `~/.cargo/config.toml` (for cargo). Covers gcc *and* rust builds. |
+| `JOBS` | `$(nproc)` on the host | Parallelism. Baked into `/etc/makepkg.conf` `MAKEFLAGS` (for AUR builds), `/etc/profile.d/jobs.sh` and `/etc/dosemu2-jobs.env` (for direct make), and `~/.cargo/config.toml` (for cargo). Covers gcc *and* rust builds. |
 
 ## CI / GHCR
 

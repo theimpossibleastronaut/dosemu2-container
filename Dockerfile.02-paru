@@ -16,7 +16,10 @@
 # ABI. The source build compiles against the currently installed
 # libalpm — slower once (rust compile), but stable.
 
-ARG BASE=dosemu2-builder:01-pacman
+# Default BASE points at the published GHCR image so `docker build`
+# without an explicit --build-arg works out of the box. The Makefile
+# passes BASE=dosemu2-builder:01-pacman for local-only chained builds.
+ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:01-pacman
 
 FROM ${BASE} AS builder
 RUN . /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS \

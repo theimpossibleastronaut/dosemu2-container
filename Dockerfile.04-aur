@@ -20,7 +20,9 @@
 # /opt/aur-pkgs accumulates: it inherits the paru + djcrx archives
 # from earlier phases and adds the new ones built here.
 
-ARG BASE=dosemu2-builder:03-djcrx
+# Default BASE points at the published GHCR image; Makefile overrides
+# with dosemu2-builder:03-djcrx for local-only chained builds.
+ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:03-djcrx
 
 FROM ${BASE} AS builder
 # --mflags=--nocheck:

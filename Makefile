@@ -24,7 +24,11 @@
 BUILDER_IMAGE ?= dosemu2-builder
 RUNTIME_IMAGE ?= dosemu2
 DOSEMU2_SRC   ?= /home/andy/src/dosemu2
-JOBS          ?=
+# Default to host's nproc. Inside the Dockerfile there's a fallback
+# to `nproc` inside the buildkit container if JOBS comes in empty
+# (covers ad-hoc `docker build` without the Makefile), but resolving
+# here makes the value visible in build logs and easy to override.
+JOBS          ?= $(shell nproc)
 
 # Each builder-phase tag also serves as the FROM base of the next.
 TAG_01 := $(BUILDER_IMAGE):01-pacman
