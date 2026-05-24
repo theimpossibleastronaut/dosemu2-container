@@ -47,6 +47,77 @@ Pass DOS commands the same way you would to `dosemu` on the host:
 docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:latest -td -ks -E "ver"
 ```
 
+### Running graphics-mode DOS programs (games etc.)
+
+Text-mode invocations like the `-E "ver"` example above work with no
+extra plumbing, but a graphics-mode program (Commander Keen, Wolf 3D,
+DOOM, AM's Mini Golf 3D, …) needs `dosemu` to open an X11 window —
+which means the container needs access to your X server. The
+canonical Linux recipe:
+
+```sh
+xhost +local:docker
+```
+
+```sh
+docker run --rm -it \
+    --entrypoint /bin/bash \
+    -e DISPLAY=$DISPLAY \
+    -e XDG_RUNTIME_DIR=/tmp \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    -v ~/.dosemu:/home/dosuser/.dosemu \
+    ghcr.io/theimpossibleastronaut/dosemu2-container:latest
+```
+
+Then from inside the container shell:
+
+```sh
+dosemu -T
+```
+
+`dosemu -T` keeps dosemu open after a DOS command exits (without
+it, a game finishing or erroring brings down the whole window). At
+the DOS prompt, `cd` into your game's directory and run it as
+normal — e.g. for the Commander Keen 1 shareware data living under
+`~/.dosemu/drive_c/games/keen1/` on the host:
+
+```
+C:\> cd \games\keen1
+C:\GAMES\KEEN1> keen1
+```
+
+What the flags do:
+
+- `xhost +local:docker` — one-time on the host; tells your X server
+  to accept connections from any local user. Re-run after a logout
+  if you stop allowing local connections.
+- `-e DISPLAY=$DISPLAY` + `-v /tmp/.X11-unix:/tmp/.X11-unix` —
+  point the container at your X server and give it access to the
+  socket.
+- `-e XDG_RUNTIME_DIR=/tmp` — SDL3 wants this set; `/tmp` is the
+  least-fragile choice inside a container.
+- `-v ~/.dosemu:/home/dosuser/.dosemu` — share the host's
+  `~/.dosemu` with the container's dosuser. Mounts your existing
+  DOS C: drive (`~/.dosemu/drive_c/`), config, and boot log so
+  state persists across `docker run` invocations.
+- `--entrypoint /bin/bash` — drop into a shell instead of the
+  default `dosemu` entrypoint so you can run `dosemu -T`
+  interactively.
+
+A one-shot `docker run … -E KEEN1.EXE` doesn't currently work for
+games because dosemu's DOS-side CWD stays at `C:\` regardless of
+the host's `-w` flag; the game can't find its data files and
+exits. The interactive flow above is the recommended pattern.
+
+Wayland hosts can fall back to XWayland and use the same recipe.
+macOS / Windows hosts need an external X server (XQuartz, VcXsrv)
+and `host.docker.internal` for `DISPLAY` — see your X server's
+docker-from-host docs.
+
+If you don't have an X server available (headless CI etc.), the
+`-dumb` and `-term` launcher flags fall back to a terminal-only
+interface — useful for text-mode DOS programs but not for games.
+
 ### Build dosemu2 locally against your own source
 
 Pull the `:build-env` builder image, bind-mount your dosemu2
