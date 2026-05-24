@@ -11,10 +11,19 @@ FROM archlinux:base-devel
 
 ARG JOBS=
 
+# Install a PostTransaction pacman hook BEFORE installing anything
+# else, so this and every later pacman -S in any descendant image
+# auto-cleans /var/cache/pacman/pkg via paccache. Avoids the
+# easy-to-miss `pacman -Scc --noconfirm` gotcha (the --noconfirm
+# accepts the default of N for "remove all cached files", which is a
+# no-op).
+COPY hooks/clean_cache.hook /etc/pacman.d/hooks/clean_cache.hook
+
 # Mirror the dosemu2-git PKGBUILD's depends + optdepends list, adjusted
 # for upstream's SDL3 requirement (sdl3, not sdl2). base-devel already
 # brings gcc, make, autoconf, automake, binutils, bison, flex, perl,
-# sed.
+# sed. The cache-clean hook above uses /usr/bin/find which is in
+# findutils (already part of base — no extra package needed).
 RUN pacman -Syu --noconfirm --needed \
         git sudo bash unzip upx \
         fontconfig libb64 libieee1284 libslirp json-c jansson readline \
@@ -27,8 +36,9 @@ RUN pacman -Syu --noconfirm --needed \
         xorg-bdftopcf           `# BDF→PCF for X fonts during build` \
         vde2                    `# alt networking backend` \
         libsamplerate           `# SDL audio resampling` \
-        soundfont-fluid         `# default FluidR3 soundfont for MIDI` \
- && pacman -Scc --noconfirm
+        soundfont-fluid         `# default FluidR3 soundfont for MIDI`
+# No explicit cache clean here — the hook installed above fires
+# PostTransaction and clears /var/cache/pacman/pkg automatically.
 
 # makepkg refuses to run as root; the builder user needs passwordless
 # sudo so makepkg's --syncdeps/--install steps can call pacman.

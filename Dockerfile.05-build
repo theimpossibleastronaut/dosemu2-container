@@ -33,7 +33,7 @@ FROM ${BASE} AS builder
 # rsync makes the host-source untar cleaner than cp -a; install it
 # inside this stage only.
 USER root
-RUN pacman -Sy --noconfirm --needed rsync && pacman -Scc --noconfirm
+RUN pacman -Sy --noconfirm --needed rsync
 USER builder
 
 # Bind-mount host source RO, untar into a writable scratch dir so the
@@ -61,6 +61,12 @@ RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
 # ---------------------------------------------------------------------------
 FROM archlinux:latest
 
+# Same auto-clean-cache hook as Phase 01 — install it BEFORE any
+# pacman -S so the very first transaction here gets cleaned too.
+# This stage starts from a fresh archlinux:latest so it doesn't
+# inherit Phase 01's hook.
+COPY hooks/clean_cache.hook /etc/pacman.d/hooks/clean_cache.hook
+
 # Runtime libraries only — no -dev, no compilers. Mirrors the
 # linkage-time deps of dosemu2.bin plus the AUR runtime libs
 # (libsearpc, libfdpp, libdj64, etc.). gcc-libs is pulled in
@@ -75,8 +81,8 @@ RUN pacman -Syu --noconfirm --needed \
         swh-plugins             `# LADSPA filter.so loaded by dosemu2 at runtime` \
         vde2                    `# alt networking backend` \
         libsamplerate           `# SDL audio resampling` \
-        soundfont-fluid         `# default FluidR3 soundfont for MIDI` \
- && pacman -Scc --noconfirm
+        soundfont-fluid         `# default FluidR3 soundfont for MIDI`
+# No explicit cache clean — the hook above fires PostTransaction.
 
 # Install only the *runtime* AUR-built packages from Phase 04's
 # archive. Phase 04 archives every built package (djgpp toolchain,
