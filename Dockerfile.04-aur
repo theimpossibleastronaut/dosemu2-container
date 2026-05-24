@@ -26,18 +26,14 @@ ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:01-pacman
 
 FROM ${BASE}
 
-# Bring the host-side binary repo into the image at the same path
-# the previous Phase 04 used, so Phase 05 (which COPYs --from=builder
-# /opt/aur-pkgs) stays unchanged.
-COPY --chown=builder:builder aur-pkgs/ /opt/aur-pkgs/
-
-# pacman -U all archives in one transaction so it can sort install
-# order from inter-package deps. The PostTransaction hook installed
-# in Phase 01 auto-clears /var/cache/pacman/pkg afterwards. The
-# repo-add metadata files in /opt/aur-pkgs (dosemu2-deps.db.tar.gz
-# etc.) are harmless to leave alongside the .pkg.tar.zst files —
-# pacman -U ignores them.
-RUN sudo pacman -U --noconfirm /opt/aur-pkgs/*.pkg.tar.zst
+# Bind-mount aur-pkgs/ from the build context for the duration of
+# the install. Using --mount=type=bind instead of COPY keeps the
+# .pkg.tar.zst files out of the image — they're 371 MB of already-
+# installed-system-wide bytes that would otherwise sit at
+# /opt/aur-pkgs/ as dead weight in :build-env. The PostTransaction
+# hook installed in Phase 01 auto-clears /var/cache/pacman/pkg.
+RUN --mount=type=bind,source=aur-pkgs,target=/tmp/aur-pkgs \
+    sudo pacman -U --noconfirm /tmp/aur-pkgs/*.pkg.tar.zst
 
 # Runtime entrypoint: remap builder's UID/GID to match the
 # bind-mounted workspace owner so files written from inside the

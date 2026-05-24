@@ -91,15 +91,19 @@ RUN pacman -Syu --noconfirm --needed \
 # runtime image inflates it by ~3 GB with tools the runtime never
 # uses. Keep the list explicit so a future AUR package addition
 # doesn't silently bloat :latest.
-COPY --from=builder /opt/aur-pkgs /tmp/aur-pkgs
-RUN pacman -U --noconfirm \
+# Bind-mount aur-pkgs/ from the build context (same as Phase 04 —
+# avoids baking 371 MB of .pkg.tar.zst into the runtime image just
+# to immediately delete it). Phase 04 no longer keeps the .zst at
+# /opt/aur-pkgs, so we go to the build context directly instead of
+# `COPY --from=builder`.
+RUN --mount=type=bind,source=aur-pkgs,target=/tmp/aur-pkgs \
+    pacman -U --noconfirm \
         /tmp/aur-pkgs/libsearpc-*.pkg.tar.zst \
         /tmp/aur-pkgs/dj64-git-*.pkg.tar.zst \
         /tmp/aur-pkgs/fdpp-*.pkg.tar.zst \
         /tmp/aur-pkgs/comcom-common-git-*.pkg.tar.zst \
         /tmp/aur-pkgs/comcom64-git-*.pkg.tar.zst \
-        /tmp/aur-pkgs/munt-*.pkg.tar.zst \
- && rm -rf /tmp/aur-pkgs
+        /tmp/aur-pkgs/munt-*.pkg.tar.zst
 
 # archlinux:latest ships /usr/local/share/man as a symlink to ../man.
 # dosemu2's install tree contains a real /usr/local/share/man directory,
