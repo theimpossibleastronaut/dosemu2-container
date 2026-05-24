@@ -113,7 +113,12 @@ jobs:
     env:
       DOSEMU2_REF: ${{ inputs.ref || 'devel' }}
     steps:
+      # lfs: true — Phase 05's runtime stage bind-mounts aur-pkgs/
+      # from the build context (same as Phase 04), so the .zst files
+      # need to be real bytes, not LFS pointers.
       - uses: actions/checkout@v6
+        with:
+          lfs: true
 
       - name: Clone dosemu2 (${{ env.DOSEMU2_REF }})
         # No --depth=1: the dosemu2 build's getversion script needs git
