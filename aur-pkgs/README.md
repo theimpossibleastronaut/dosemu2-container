@@ -2,10 +2,20 @@
 
 A small **local pacman repository** of the AUR-built packages this
 container chain depends on (DJGPP toolchain, `fdpp`, `dj64-git`,
-`comcom*-git`, `munt`, `libsearpc`, etc.). The chain installs them
-straight from here instead of compiling them on every rebuild via
-`paru`, which collapses Phase 04 from a ~30-minute djgpp-gcc build to
-a few-second `pacman -U`.
+`comcom*-git`, `munt`, `libsearpc`, `paru`, etc.). The chain installs
+them straight from here instead of compiling them via `paru` on every
+rebuild, which collapses Phase 04 from a ~30-minute djgpp-gcc build
+to a few-second `pacman -U`.
+
+## Scope: this is internal to this repo's build chain
+
+This directory is consumed by `Dockerfile.04-aur` via a `COPY
+aur-pkgs/ /opt/aur-pkgs/`; the files reach the build context through
+`git clone` + `git lfs fetch`. It is **not** intended to be added as
+a pacman repo on someone else's system — pacman doesn't follow Git
+LFS pointer redirects, and we don't publish the `.pkg.tar.zst` files
+to a flat HTTP endpoint. If you want these AUR packages for a regular
+Arch host, use the AUR directly (`paru -S fdpp dj64-git ...`).
 
 ## What's here
 
@@ -14,30 +24,56 @@ a few-second `pacman -U`.
   `repo-add`. Small enough to live in regular Git (not LFS).
 - `dosemu2-deps.files.tar.gz` — pacman file-list database (companion
   to the above).
+- `dosemu2-deps.db` / `.files` — symlinks pointing at the `.tar.gz`
+  files (pacman accepts either form).
 
-The `dosemu2-deps.db` / `dosemu2-deps.files` symlinks point at the
-`.tar.gz` files — pacman expects either form to be reachable.
+## Updating an existing package
 
-## Adding / updating a package
-
-Drop the new `.pkg.tar.zst` into this directory and rerun:
+Drop the new `.pkg.tar.zst` into this directory, replace the old
+one, and rerun `repo-add` — it's idempotent and updates existing
+entries in place:
 
 ```sh
 cd aur-pkgs
 repo-add dosemu2-deps.db.tar.gz *.pkg.tar.zst
+git add aur-pkgs/
+git commit -m "aur-pkgs: bump <pkgname> to <version>"
 ```
 
-`repo-add` is idempotent — it updates existing entries and adds new
-ones in place.
+## Adding a new package (workflow path)
 
-## Where do new packages come from?
+For new AUR deps you don't have prebuilt locally, the easiest path is
+the `build-aur-pkg.yml` workflow:
 
-The CI build chain (Phase 04) will fall back to building any package
-that isn't already in this directory. When that happens, the
-workflow uploads the freshly-built `.pkg.tar.zst` as an artifact;
-download it, drop it here, rerun `repo-add`, and commit.
+1. **Actions → "Build an AUR package" → Run workflow**, enter the
+   AUR package name (e.g. `dj64-git`).
+2. When the run finishes, **download the workflow artifact**. You'll
+   get one or more `.pkg.tar.zst` (handles split PKGBUILDs that
+   produce multiple subpackages).
+3. **Drop the file(s) into `aur-pkgs/`**, run `repo-add` as above,
+   commit + push.
+4. The next `build.yml` run picks up the new file via the
+   `aur-pkgs/**` path trigger and republishes `:build-env` / `:latest`.
 
-For local rebuilds: same idea, but the freshly-built `.pkg.tar.zst`
-ends up under `/opt/aur-pkgs/` inside the running container. Extract
-with `docker cp` (or `docker run --rm img tar -C /opt/aur-pkgs -cf -
-. | tar -xf - -C aur-pkgs`) and `repo-add`.
+The workflow deliberately doesn't auto-commit — keeps the human in
+the loop on what enters the binary repo and avoids feedback loops
+with `build.yml`.
+
+## Adding a new package (local path)
+
+If you'd rather build locally:
+
+```sh
+docker run --rm -v "$PWD/aur-pkgs:/out" \
+    ghcr.io/theimpossibleastronaut/dosemu2-container:build-env \
+    bash -c 'paru -S --noconfirm --rebuild --mflags=--nocheck <pkg> \
+             && cp /home/builder/.cache/paru/clone/**/*.pkg.tar.zst /out/'
+
+cd aur-pkgs
+repo-add dosemu2-deps.db.tar.gz *.pkg.tar.zst
+git add aur-pkgs/
+git commit -m "aur-pkgs: add <pkg>"
+```
+
+Same end state — file lands in `aur-pkgs/`, repo-add updates the
+index, you commit.

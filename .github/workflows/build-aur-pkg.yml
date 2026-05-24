@@ -1,0 +1,84 @@
+name: Build an AUR package
+
+# Manually-triggered helper for when a new AUR dep is needed and we
+# don't have a prebuilt .pkg.tar.zst in aur-pkgs/ yet. Runs paru
+# inside the :build-env image, copies the resulting package out, and
+# uploads it as a workflow artifact.
+#
+# Usage:
+#   1. Trigger via Actions UI → "Build an AUR package" → Run workflow,
+#      enter the AUR package name (e.g. "fdpp", "dj64-git").
+#   2. When the run finishes, download the workflow artifact.
+#   3. Drop the .pkg.tar.zst into aur-pkgs/, run `repo-add` to update
+#      the local pacman db, commit + push.
+#   4. The next build.yml run picks it up via aur-pkgs/**.
+#
+# Deliberately doesn't auto-commit — keeps the human in the loop on
+# what enters the binary repo, avoids commit loops with build.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pkg:
+        description: 'AUR package name (e.g. fdpp, dj64-git, comcom64-git)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}:build-env
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ${{ inputs.pkg }} in :build-env
+        run: |
+          set -e
+          mkdir -p out
+          docker run --rm \
+            -v "$PWD/out:/out" \
+            -e PKG="${{ inputs.pkg }}" \
+            "${IMAGE}" \
+            bash -c '
+              set -e
+              # paru as builder (the default runtime user after the
+              # entrypoint UID-remap is a no-op on the runner since
+              # /out is owned by the same uid we exec as).
+              # --rebuild forces a build even if the pkg is already
+              # installed (it is — :build-env has all current AUR
+              # pkgs). --skipreview / --mflags=--nocheck mirror the
+              # Phase 04 flags so makepkg trips on the same scripts
+              # (perl 5.40+ noise in nasm-segelf, etc.).
+              paru -S --noconfirm --skipreview --rebuild \
+                   --mflags=--nocheck \
+                   "$PKG"
+
+              # paru caches the freshly-built .pkg.tar.zst under
+              # ~/.cache/paru/clone/<pkg>/. Copy every .pkg.tar.zst
+              # whose name matches the pkg (handles split PKGBUILDs
+              # that produce multiple subpackages, e.g. comcom-git →
+              # comcom-common-git + comcom64-git).
+              shopt -s globstar nullglob
+              for f in /home/builder/.cache/paru/clone/**/*.pkg.tar.zst; do
+                [ -e "$f" ] || continue
+                cp -v "$f" /out/
+              done
+              ls -la /out/
+            '
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aur-pkg-${{ inputs.pkg }}
+          path: out/*.pkg.tar.zst
+          if-no-files-found: error
