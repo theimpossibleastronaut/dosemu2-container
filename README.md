@@ -52,7 +52,6 @@ git clone https://github.com/dosemu2/dosemu2.git ~/src/dosemu2
 
 docker run --rm -it \
     -v ~/src/dosemu2:/workspace \
-    -w /workspace \
     ghcr.io/theimpossibleastronaut/dosemu2-container:build-env
 
 # Inside the container:
@@ -84,12 +83,12 @@ The Dockerfiles default their `BASE` to the published GHCR images,
 so the `:build-env` builder gets pulled automatically — no `docker
 pull` or local tag needed.
 
-UID note: the builder image's `builder` user is UID 1000. If your
-host user is also UID 1000 (typical), bind-mounted files appear with
-matching ownership and there's nothing to do. If not, files the
-container writes will land on the host as UID 1000; either work
-around with `--user "$(id -u):$(id -g)"` on `docker run` or just
-chown after.
+The image's entrypoint stats the bind-mounted `/workspace` and
+remaps the in-container `builder` user's UID/GID to match the host
+owner before dropping privileges, so files written from inside the
+container land on the host with correct ownership — no `--user`
+flag, no post-build chown. Override the auto-detection by exporting
+`HOSTUID` / `HOSTGID` in the docker environment if you need to.
 
 ## Build from scratch
 

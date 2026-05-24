@@ -114,3 +114,20 @@ COPY --from=builder --chown=builder:builder /opt/aur-pkgs /opt/aur-pkgs
 # inter-package deps. Already-installed packages (paru, djcrx) get a
 # harmless re-install.
 RUN sudo pacman -U --noconfirm /opt/aur-pkgs/*.pkg.tar.zst
+
+# ---------------------------------------------------------------------------
+# Runtime entrypoint: remap builder's UID/GID to match the bind-mounted
+# workspace owner so files written from inside the container land on the
+# host with correct ownership. See entrypoint.sh for details.
+#
+# Switching to USER root so the entrypoint can usermod/groupmod; the
+# entrypoint drops to builder before exec'ing the user's command. The
+# next phase (05-build, the runtime image) overrides both USER and
+# ENTRYPOINT so this only affects the :build-env / :04-aur tag.
+# ---------------------------------------------------------------------------
+USER root
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash"]
