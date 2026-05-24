@@ -43,9 +43,9 @@ docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:latest -td 
 
 ### Build dosemu2 locally against your own source
 
-Pull the `:04-aur` builder image, bind-mount your dosemu2 source,
-and build dosemu2 the usual way (autogen / configure / make) inside
-the container:
+Pull the `:build-env` builder image, bind-mount your dosemu2
+source, and build dosemu2 the usual way (autogen / configure /
+make) inside the container:
 
 ```sh
 git clone https://github.com/dosemu2/dosemu2.git ~/src/dosemu2
@@ -53,7 +53,7 @@ git clone https://github.com/dosemu2/dosemu2.git ~/src/dosemu2
 docker run --rm -it \
     -v ~/src/dosemu2:/workspace \
     -w /workspace \
-    ghcr.io/theimpossibleastronaut/dosemu2-container:04-aur
+    ghcr.io/theimpossibleastronaut/dosemu2-container:build-env
 
 # Inside the container:
 ./autogen.sh
@@ -81,8 +81,8 @@ docker buildx build --builder default --load \
 ```
 
 The Dockerfiles default their `BASE` to the published GHCR images,
-so the `:04-aur` builder gets pulled automatically — no `docker pull`
-or local tag needed.
+so the `:build-env` builder gets pulled automatically — no `docker
+pull` or local tag needed.
 
 UID note: the builder image's `builder` user is UID 1000. If your
 host user is also UID 1000 (typical), bind-mounted files appear with
@@ -112,7 +112,7 @@ lists.")
 | `dosemu2-builder:01-pacman` | 1.4 GB | Arch base + pacman deps + builder user + parallelism config |
 | `dosemu2-builder:02-paru` | 1.4 GB | + `paru` (built from source, not the prebuilt `paru-bin`) |
 | `dosemu2-builder:03-djcrx` | 1.4 GB | + `djgpp-djcrx-bootstrap` to break the djgpp build cycle |
-| `dosemu2-builder:04-aur` | 3.1 GB | + the full DJGPP toolchain, `libsearpc`, `dj64-git`, `fdpp`, `comcom64-git`; built `.pkg.tar.zst` files archived to `/opt/aur-pkgs/` |
+| `dosemu2-builder:04-aur` (also `:build-env`) | 3.1 GB | + the full DJGPP toolchain, `libsearpc`, `dj64-git`, `fdpp`, `comcom64-git`; built `.pkg.tar.zst` files archived to `/opt/aur-pkgs/`. The user-facing name for this image is `:build-env`; `:04-aur` remains as the chain-position checkpoint. |
 | `dosemu2:latest` | 3.1 GB | **Runtime only.** Slim `archlinux:latest` + dosemu2 from git HEAD + AUR runtime packages. No build toolchain. |
 | `dosemu2:release` | 0.4 GB | **Runtime only.** Slim `ubuntu:24.04` + dosemu2 from the PPA. |
 

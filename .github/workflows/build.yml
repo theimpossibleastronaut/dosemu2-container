@@ -119,14 +119,20 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build & push :04-aur
+      - name: Build & push :04-aur (also tagged :build-env)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile.04-aur
           push: true
           build-args: BASE=${{ env.IMAGE }}:03-djcrx
-          tags: ${{ env.IMAGE }}:04-aur
+          # :build-env is the user-facing alias for the build
+          # environment (all deps installed, no dosemu2 binary).
+          # Same digest as :04-aur, which stays as the internal
+          # chain checkpoint name.
+          tags: |
+            ${{ env.IMAGE }}:04-aur
+            ${{ env.IMAGE }}:build-env
           cache-from: type=registry,ref=${{ env.IMAGE }}:04-aur
           cache-to: type=inline
 
