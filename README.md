@@ -1,15 +1,21 @@
 # dosemu2-container
 
-Docker images of [dosemu2](https://github.com/dosemu2/dosemu2), built
-two ways:
+Docker images of [dosemu2](https://github.com/dosemu2/dosemu2), in
+three flavors:
 
-- **`:latest`** — Arch + dosemu2 from upstream git (`devel`), produced
-  by a 5-phase pipeline that also publishes every intermediate builder
-  image.
+- **`:latest`** — Arch + dosemu2 from upstream git (`devel`), built
+  from a prebuilt AUR-package set (`aur-pkgs/`, Git LFS) on top of
+  a slim Arch base.
 - **`:release`** — Ubuntu + dosemu2 from the official PPA, the
   latest released version.
+- **`:build-env`** — the same image `:latest` is built on top of:
+  Arch with the full DJGPP toolchain, `fdpp`, `dj64`, `comcom*`,
+  `munt`, `libsearpc`, `paru`, etc. preinstalled. Bind-mount your
+  dosemu2 source and run `./autogen.sh && ./default-configure &&
+  make && sudo make install` — see "Build dosemu2 locally against
+  your own source" below.
 
-Both are built and pushed to
+All three are built and pushed to
 [`ghcr.io/theimpossibleastronaut/dosemu2-container`](https://github.com/theimpossibleastronaut/dosemu2-container/pkgs/container/dosemu2-container).
 
 ## Docker is the only build dependency
