@@ -1,13 +1,23 @@
 name: Prune untagged GHCR images
 
-# Weekly cleanup of untagged versions of
+# Biweekly cleanup of orphaned untagged versions of
 # ghcr.io/theimpossibleastronaut/dosemu2-container.
 #
-# Untagged versions accumulate every time a build pushes a new digest
-# for an existing tag (e.g. each weekly :latest rebuild leaves the
-# previous :latest's old digest behind, now untagged). Tagged versions
-# are NEVER touched — only versions with an empty `tags` array are
-# deleted.
+# IMPORTANT: untagged ≠ deletable. When buildx pushes a multi-arch
+# image it creates an OCI image index (which gets the tag) plus one
+# untagged platform manifest per arch plus an untagged attestation
+# manifest. A naive "delete every untagged version" sweep deletes
+# those referenced platform/attestation manifests, leaving the tag
+# pointing at dangling digests and `docker pull` failing with
+# "manifest unknown". This workflow previously did exactly that and
+# broke every tag in the repo — see git log for the post-mortem.
+#
+# Safe sweep:
+#   1. Walk every TAGGED version, fetch its manifest body from GHCR.
+#   2. If it's an index, collect every referenced manifest digest
+#      (platform manifests + attestation manifests).
+#   3. Only delete untagged versions whose digest is NOT in that
+#      "keep" set. Anything referenced by a live tag survives.
 #
 # Auth: uses the workflow's GITHUB_TOKEN by default. If you get a 403
 # from the DELETE call, the most likely cause is the repo's default
@@ -19,7 +29,10 @@ name: Prune untagged GHCR images
 
 on:
   schedule:
-    - cron: '0 4 * * 0'  # weekly, Sunday 04:00 UTC
+    # Biweekly: 1st and 15th of each month, 04:00 UTC. Twice a month
+    # is plenty — untagged orphans only accumulate when builds push
+    # new digests to existing tags.
+    - cron: '0 4 1,15 * *'
   workflow_dispatch:
 
 permissions:
@@ -33,21 +46,61 @@ jobs:
       PKG: ${{ github.event.repository.name }}
       OWNER: ${{ github.repository_owner }}
     steps:
-      - name: List & delete untagged versions
+      - name: Prune unreferenced untagged versions
         run: |
           set -euo pipefail
 
+          # All versions: id, digest (the `name` field), tag list.
           gh api --paginate \
             "/orgs/${OWNER}/packages/container/${PKG}/versions" \
-            --jq '.[] | select(.metadata.container.tags | length == 0) | .id' \
-            > untagged.txt
+          > all_versions.json
 
-          count=$(wc -l < untagged.txt)
-          echo "Found ${count} untagged version(s)."
+          # Anonymous bearer token for GHCR pulls — we just need to read
+          # manifests; no write scope required for the manifest fetch.
+          REGISTRY_TOKEN=$(curl -s \
+            "https://ghcr.io/token?scope=repository:${OWNER}/${PKG}:pull" \
+            | jq -r .token)
 
-          while read -r id; do
+          # Build the "keep" set: every platform/attestation manifest
+          # digest referenced by a tagged index.
+          : > keep_digests.txt
+          jq -r '.[] | select(.metadata.container.tags | length > 0) | .name' \
+            all_versions.json \
+          | while read -r tagged_digest; do
+              curl -s \
+                "https://ghcr.io/v2/${OWNER}/${PKG}/manifests/${tagged_digest}" \
+                -H "Authorization: Bearer ${REGISTRY_TOKEN}" \
+                -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+              | jq -r '.manifests[]?.digest // empty'
+            done \
+          | sort -u > keep_digests.txt
+
+          keep_count=$(wc -l < keep_digests.txt)
+          echo "Tagged indexes reference ${keep_count} platform/attestation digest(s) — keeping those."
+
+          # Untagged versions: candidates for deletion. Skip any whose
+          # digest is in the keep set.
+          jq -r '.[]
+                 | select(.metadata.container.tags | length == 0)
+                 | "\(.id)\t\(.name)"' \
+            all_versions.json \
+          > untagged.tsv
+
+          total=$(wc -l < untagged.tsv)
+          echo "Found ${total} untagged version(s) to consider."
+
+          deleted=0; skipped=0
+          while IFS=$'\t' read -r id digest; do
             [ -z "$id" ] && continue
-            echo "deleting version $id"
-            gh api --method DELETE \
-              "/orgs/${OWNER}/packages/container/${PKG}/versions/${id}"
-          done < untagged.txt
+            if grep -qx "$digest" keep_digests.txt; then
+              echo "skip  $id  ($digest — referenced by a tagged index)"
+              skipped=$((skipped + 1))
+            else
+              echo "del   $id  ($digest)"
+              gh api --method DELETE \
+                "/orgs/${OWNER}/packages/container/${PKG}/versions/${id}"
+              deleted=$((deleted + 1))
+            fi
+          done < untagged.tsv
+
+          echo "Pruned ${deleted}; kept ${skipped} referenced untagged version(s)."
