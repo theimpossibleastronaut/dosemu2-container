@@ -1,0 +1,1 @@
+aur-pkgs/*.pkg.tar.zst filter=lfs diff=lfs merge=lfs -text
