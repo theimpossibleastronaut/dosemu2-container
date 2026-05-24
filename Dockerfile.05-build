@@ -78,9 +78,21 @@ RUN pacman -Syu --noconfirm --needed \
         soundfont-fluid         `# default FluidR3 soundfont for MIDI` \
  && pacman -Scc --noconfirm
 
-# Install the AUR-built packages from Phase 04's archive.
+# Install only the *runtime* AUR-built packages from Phase 04's
+# archive. Phase 04 archives every built package (djgpp toolchain,
+# nasm-segelf, the DJGPP-djcrx C runtime headers, etc.) because all
+# of those are needed at *build* time; pacman -U'ing the lot in the
+# runtime image inflates it by ~3 GB with tools the runtime never
+# uses. Keep the list explicit so a future AUR package addition
+# doesn't silently bloat :latest.
 COPY --from=builder /opt/aur-pkgs /tmp/aur-pkgs
-RUN pacman -U --noconfirm /tmp/aur-pkgs/*.pkg.tar.zst \
+RUN pacman -U --noconfirm \
+        /tmp/aur-pkgs/libsearpc-*.pkg.tar.zst \
+        /tmp/aur-pkgs/dj64-git-*.pkg.tar.zst \
+        /tmp/aur-pkgs/fdpp-*.pkg.tar.zst \
+        /tmp/aur-pkgs/comcom-common-git-*.pkg.tar.zst \
+        /tmp/aur-pkgs/comcom64-git-*.pkg.tar.zst \
+        /tmp/aur-pkgs/munt-*.pkg.tar.zst \
  && rm -rf /tmp/aur-pkgs
 
 # archlinux:latest ships /usr/local/share/man as a symlink to ../man.
