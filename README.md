@@ -186,8 +186,6 @@ lists.")
 | Image | Size | Contents |
 |---|---|---|
 | `dosemu2-builder:01-pacman` | 1.4 GB | Arch base + pacman deps + builder user + parallelism config |
-| `dosemu2-builder:02-paru` | 1.4 GB | + `paru` (built from source, not the prebuilt `paru-bin`) |
-| `dosemu2-builder:03-djcrx` | 1.4 GB | + `djgpp-djcrx-bootstrap` to break the djgpp build cycle |
 | `dosemu2-builder:04-aur` (also `:build-env`) | 3.1 GB | + the full DJGPP toolchain, `libsearpc`, `dj64-git`, `fdpp`, `comcom64-git`; built `.pkg.tar.zst` files archived to `/opt/aur-pkgs/`. The user-facing name for this image is `:build-env`; `:04-aur` remains as the chain-position checkpoint. |
 | `dosemu2:latest` | 3.1 GB | **Runtime only.** Slim `archlinux:latest` + dosemu2 from git HEAD + AUR runtime packages. No build toolchain. |
 | `dosemu2:release` | 0.4 GB | **Runtime only.** Slim `ubuntu:24.04` + dosemu2 from the PPA. |

@@ -2,9 +2,8 @@
 #
 # Phase 04 — install AUR-built deps from the host-side binary repo.
 #
-# Input:  dosemu2-builder:01-pacman   (skips :02-paru / :03-djcrx —
-#         we don't need paru or the djgpp-djcrx bootstrap chain
-#         because the prebuilt packages here include the real
+# Input:  dosemu2-builder:01-pacman   (no intermediate bootstrap
+#         phases — the prebuilt packages here include the real
 #         djgpp-djcrx and paru itself)
 # Output: dosemu2-builder:04-aur (also tagged :build-env)
 #

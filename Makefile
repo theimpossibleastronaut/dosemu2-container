@@ -4,6 +4,12 @@
 # tag. Rebuilding a downstream phase doesn't re-run upstream ones as
 # long as their layers stay cached.
 #
+# The chain is 01 -> 04 -> 05. The 01 -> 04 numbering gap is historical:
+# phases 02 (paru bootstrap) and 03 (djgpp-djcrx bootstrap) were
+# retired when their outputs moved into the prebuilt aur-pkgs/ set, so
+# Phase 04 now builds directly on :01-pacman. The tag names kept their
+# numbers since they're published GHCR identities.
+#
 # Targets:
 #   make all            — chain through every phase, ending at :latest
 #   make 04-aur         — stop at the AUR-pkgs-installed checkpoint
@@ -16,7 +22,7 @@
 #   DOSEMU2_SRC  — path on host bind-mounted as the dosemu2 source
 #   JOBS         — parallelism; empty = nproc inside the buildkit builder
 
-# Builder phases (01-04) live under $(BUILDER_IMAGE) — they carry the
+# Builder phases (01, 04) live under $(BUILDER_IMAGE) — they carry the
 # full build toolchain. The runtime image (phase 05) lives under
 # $(RUNTIME_IMAGE) and contains only the binary + runtime deps. Two
 # different image repos to make the distinction obvious in `docker
@@ -32,8 +38,6 @@ JOBS          ?= $(shell nproc)
 
 # Each builder-phase tag also serves as the FROM base of the next.
 TAG_01 := $(BUILDER_IMAGE):01-pacman
-TAG_02 := $(BUILDER_IMAGE):02-paru
-TAG_03 := $(BUILDER_IMAGE):03-djcrx
 TAG_04 := $(BUILDER_IMAGE):04-aur
 TAG_05 := $(RUNTIME_IMAGE):latest
 
@@ -47,7 +51,7 @@ TAG_05 := $(RUNTIME_IMAGE):latest
 # than buildx's internal cache.
 DOCKER_BUILD := docker buildx build --builder default --load
 
-.PHONY: all 01-pacman 02-paru 03-djcrx 04-aur 05-build release shell clean rebuild-aur rebuild-dosemu2
+.PHONY: all 01-pacman 04-aur 05-build release shell clean rebuild-aur rebuild-dosemu2
 
 # `make all` builds the git chain. The PPA-based release image is
 # independent and built on demand via `make release`.
@@ -60,23 +64,12 @@ all: 05-build
 	  -t $(TAG_01) \
 	  .
 
-02-paru: 01-pacman
+# Phase 04 installs the prebuilt aur-pkgs/ on top of :01-pacman (no
+# intermediate bootstrap phases — the vendored set already includes
+# paru and the full djgpp-djcrx).
+04-aur: 01-pacman
 	$(DOCKER_BUILD) \
 	  --build-arg BASE=$(TAG_01) \
-	  -f Dockerfile.02-paru \
-	  -t $(TAG_02) \
-	  .
-
-03-djcrx: 02-paru
-	$(DOCKER_BUILD) \
-	  --build-arg BASE=$(TAG_02) \
-	  -f Dockerfile.03-djcrx \
-	  -t $(TAG_03) \
-	  .
-
-04-aur: 03-djcrx
-	$(DOCKER_BUILD) \
-	  --build-arg BASE=$(TAG_03) \
 	  -f Dockerfile.04-aur \
 	  -t $(TAG_04) \
 	  .
@@ -102,12 +95,13 @@ release:
 	  -t $(RUNTIME_IMAGE):release \
 	  .
 
-# Convenience: rebuild only the AUR phase (e.g. after the AUR upstream
-# bumps a pkg) without re-running paru bootstrap or pacman install.
+# Convenience: rebuild only the AUR phase on top of :01-pacman, e.g.
+# after swapping a package in aur-pkgs/. --no-cache forces the
+# pacman -U to pick up the changed files.
 rebuild-aur:
 	$(DOCKER_BUILD) \
 	  --no-cache \
-	  --build-arg BASE=$(TAG_03) \
+	  --build-arg BASE=$(TAG_01) \
 	  -f Dockerfile.04-aur \
 	  -t $(TAG_04) \
 	  .
@@ -132,4 +126,4 @@ shell:
 	  $(RUNTIME_IMAGE):latest
 
 clean:
-	-docker rmi $(TAG_01) $(TAG_02) $(TAG_03) $(TAG_04) $(TAG_05) $(RUNTIME_IMAGE):release 2>/dev/null
+	-docker rmi $(TAG_01) $(TAG_04) $(TAG_05) $(RUNTIME_IMAGE):release 2>/dev/null
