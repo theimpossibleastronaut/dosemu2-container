@@ -52,6 +52,7 @@ permissions:
 
 env:
   IMAGE: ghcr.io/${{ github.repository }}
+  DH_IMAGE: docker.io/andy5995/dosemu2
 
 jobs:
   build-01-pacman:
@@ -90,6 +91,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_PAT_TOKEN }}
       - name: Build & push :04-aur (also tagged :build-env)
         uses: docker/build-push-action@v7
         with:
@@ -100,10 +105,13 @@ jobs:
           # :build-env is the user-facing alias for the build
           # environment (all deps installed, no dosemu2 binary).
           # Same digest as :04-aur, which stays as the internal
-          # chain checkpoint name.
+          # chain checkpoint name. Only :build-env is mirrored to
+          # Docker Hub; :04-aur is GHCR-only (chain BASE, never
+          # pulled from Docker Hub).
           tags: |
             ${{ env.IMAGE }}:04-aur
             ${{ env.IMAGE }}:build-env
+            ${{ env.DH_IMAGE }}:build-env
           cache-from: type=registry,ref=${{ env.IMAGE }}:04-aur
           cache-to: type=inline
 
@@ -136,6 +144,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_PAT_TOKEN }}
 
       - name: Build & push :latest
         uses: docker/build-push-action@v7
@@ -146,6 +158,8 @@ jobs:
           build-args: BASE=${{ env.IMAGE }}:04-aur
           build-contexts: |
             dosemu2=./dosemu2-src
-          tags: ${{ env.IMAGE }}:latest
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.DH_IMAGE }}:latest
           cache-from: type=registry,ref=${{ env.IMAGE }}:latest
           cache-to: type=inline
