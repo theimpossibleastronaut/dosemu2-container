@@ -11,11 +11,6 @@ on:
       - 'Dockerfile.release'
       - '.github/workflows/build-release.yml'
   workflow_dispatch:
-  schedule:
-    # Weekly. PPA refreshes are infrequent but cheap to rebuild
-    # against (~2 min), so a low-cost weekly cron keeps :release
-    # tracking whatever the PPA currently ships.
-    - cron: '15 6 * * 1'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
