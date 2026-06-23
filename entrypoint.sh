@@ -28,6 +28,14 @@ if [ -n "$detected_uid" ] && [ "$detected_uid" != "0" ] && [ "$detected_uid" != 
   # The home dir's ownership wasn't recursively chowned by usermod;
   # fix it so caches (paru, cargo) are writable by the new IDs.
   chown -R "$detected_uid:$detected_gid" /home/builder
+elif [ "$detected_uid" = "0" ] && [ -n "$(ls -A "$PWD" 2>/dev/null)" ]; then
+  # A root-owned, non-empty workdir is almost certainly a bind-mounted
+  # source we can't remap onto. Warn so a later "Permission denied"
+  # during the build isn't a mystery (an empty /workspace is just the
+  # no-mount ad-hoc shell — stay quiet for that).
+  echo "entrypoint: $PWD is root-owned; the build user was not remapped." >&2
+  echo "            Files built here may end up root-owned. If this is your" >&2
+  echo "            bind-mounted source, set HOSTUID/HOSTGID (e.g. in .env)." >&2
 fi
 
 # No args → interactive shell.
