@@ -186,7 +186,9 @@ tags (`:build-env`, `:latest`, `:release`) to `andy5995/dosemu2`.
 | `Dockerfile.release` | Multi-stage Ubuntu + PPA build of `:release` |
 | `aur-pkgs/` | Prebuilt `.pkg.tar.zst` set (Git LFS) installed by Phase 04. See its README |
 | `Makefile` | `make all` (01→04→05) / `release` / `rebuild-aur` / `rebuild-dosemu2` / `shell` / `clean` |
-| `docker-compose.yml` | Run-time conveniences (interactive dosemu, shell with source mounted) |
+| `docker-compose.yml` | Three services from published images: `dosemu2` (text, tag `${TAG:-release}`), `gui` (X11 wired in), `build-env` (source at `/workspace` via `DOSEMU2_SRC`). Defaults to Docker Hub `andy5995/dosemu2` |
+| `.env.example` | Tracked template for compose vars (`TAG`/`IMAGE`/`DOSEMU_HOME`/`DOSEMU2_SRC`/`HOSTUID`/`HOSTGID`); copy to `.env` (gitignored) |
+| `entrypoint.sh` | `:build-env` UID-remap entrypoint: stats `/workspace` owner, remaps `builder`, honors `HOSTUID`/`HOSTGID`. Warns (doesn't fail) on a root-owned non-empty workdir |
 | `.github/workflows/build.yml` | Main chain (01→04→latest) |
 | `.github/workflows/build-aur-pkg.yml` | Build a vendored AUR pkg artifact |
 | `.github/workflows/build-release.yml` | Release path |

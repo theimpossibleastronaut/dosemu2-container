@@ -1,30 +1,58 @@
-services:
-  # Run the built dosemu2 interactively in a terminal session.
-  # The image must already have been built via `make all`.
-  dosemu2:
-    image: ${IMAGE:-dosemu2-builder}:latest
-    stdin_open: true
-    tty: true
-    volumes:
-      # The host dosemu2 source is bind-mounted so you can rebuild
-      # against fresh source from inside the container — e.g. after
-      # editing on the host, `make` inside /workspace then run dosemu.
-      - ${DOSEMU2_SRC:-/home/andy/src/dosemu2}:/workspace:rw
-      # Per-user DOS files / config / boot log persistence.
-      - ${DOSEMU_HOME:-dosemu-home}:/home/builder/.dosemu
-    working_dir: /home/builder
+# Run dosemu2 from a published image — no local build needed. Pulls
+# from Docker Hub (andy5995/dosemu2) by default.
+#
+#   docker compose run --rm dosemu2                  # latest release, text mode
+#   TAG=latest docker compose run --rm dosemu2       # latest dev build
+#   docker compose run --rm dosemu2 -td -ks -E ver   # pass args to dosemu2
+#   docker compose run --rm gui                      # graphics (X11) — then run `dosemu -T`
+#   docker compose run --rm build-env                # build from your own source
+#
+# Copy .env.example to .env to set TAG / IMAGE / DOSEMU_HOME /
+# DOSEMU2_SRC once instead of typing them each time.
 
-  # Drop into an interactive shell in the same image, with the same
-  # mounts, for iterating on the build inside the container.
-  shell:
-    image: ${IMAGE:-dosemu2-builder}:latest
+services:
+  # Text-mode dosemu2. Default tag is :release; set TAG=latest for the
+  # dev build. Any extra args are passed straight to dosemu2.
+  dosemu2:
+    image: ${IMAGE:-andy5995/dosemu2}:${TAG:-release}
     stdin_open: true
     tty: true
-    entrypoint: /bin/bash
     volumes:
-      - ${DOSEMU2_SRC:-/home/andy/src/dosemu2}:/workspace:rw
-      - ${DOSEMU_HOME:-dosemu-home}:/home/builder/.dosemu
-    working_dir: /workspace
+      - ${DOSEMU_HOME:-dosemu-home}:/home/dosuser/.dosemu
+
+  # Graphics-mode programs (games etc.) in an X11 window on your host
+  # display. Run `xhost +local:docker` once on the host first, then
+  # `docker compose run --rm gui`, and at the shell run `dosemu -T`.
+  # For game files to be reachable from the host, point DOSEMU_HOME at
+  # a host path (e.g. DOSEMU_HOME=$HOME/.dosemu in .env).
+  gui:
+    image: ${IMAGE:-andy5995/dosemu2}:${TAG:-release}
+    entrypoint: /bin/bash
+    stdin_open: true
+    tty: true
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      XDG_RUNTIME_DIR: /tmp
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${DOSEMU_HOME:-dosemu-home}:/home/dosuser/.dosemu
+
+  # Build dosemu2 from your own source. Set DOSEMU2_SRC to your source
+  # tree; it is mounted at /workspace. The image's entrypoint remaps
+  # the in-container user to your host UID so build artifacts written
+  # to the source stay owned by you.
+  build-env:
+    image: ${IMAGE:-andy5995/dosemu2}:build-env
+    stdin_open: true
+    tty: true
+    environment:
+      # Auto-detected from the /workspace owner. Set these in .env only
+      # to override (e.g. if the source dir is root-owned and detection
+      # would fail). Empty = auto-detect.
+      HOSTUID: ${HOSTUID:-}
+      HOSTGID: ${HOSTGID:-}
+    volumes:
+      - ${DOSEMU2_SRC:-./dosemu2-src}:/workspace:rw
 
 volumes:
   dosemu-home:

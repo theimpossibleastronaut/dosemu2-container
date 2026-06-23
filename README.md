@@ -58,21 +58,13 @@ docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:latest -td 
 Text-mode invocations like the `-E "ver"` example above work with no
 extra plumbing, but a graphics-mode program (Commander Keen, Wolf 3D,
 DOOM, AM's Mini Golf 3D, …) needs `dosemu` to open an X11 window —
-which means the container needs access to your X server. The
-canonical Linux recipe:
+which means the container needs access to your X server. All the X11
+plumbing is wired into the `gui` service in `docker-compose.yml`, so
+the recipe is two commands:
 
 ```sh
 xhost +local:docker
-```
-
-```sh
-docker run --rm -it \
-    --entrypoint /bin/bash \
-    -e DISPLAY=$DISPLAY \
-    -e XDG_RUNTIME_DIR=/tmp \
-    -v /tmp/.X11-unix:/tmp/.X11-unix \
-    -v ~/.dosemu:/home/dosuser/.dosemu \
-    ghcr.io/theimpossibleastronaut/dosemu2-container:latest
+docker compose run --rm gui
 ```
 
 Then from inside the container shell:
@@ -80,6 +72,11 @@ Then from inside the container shell:
 ```sh
 dosemu -T
 ```
+
+(The raw `docker run` form, if you'd rather not use compose, is in the
+"What the flags do" list below — the `gui` service just sets those same
+flags for you. Put your game files where the host can reach them by
+setting `DOSEMU_HOME=$HOME/.dosemu` in `.env`.)
 
 `dosemu -T` keeps dosemu open after a DOS command exits (without
 it, a game finishing or erroring brings down the whole window). At
@@ -126,24 +123,27 @@ interface — useful for text-mode DOS programs but not for games.
 
 ### Build dosemu2 locally against your own source
 
-Pull the `:build-env` builder image, bind-mount your dosemu2
-source, and build dosemu2 the usual way (autogen / configure /
-make) inside the container:
+Bind-mount your dosemu2 source into the `:build-env` builder image and
+build dosemu2 the usual way (autogen / configure / make) inside the
+container. The `build-env` service in `docker-compose.yml` does the
+mount for you — point `DOSEMU2_SRC` at your source:
 
 ```sh
 git clone https://github.com/dosemu2/dosemu2.git ~/src/dosemu2
 
-docker run --rm -it \
-    -v ~/src/dosemu2:/workspace \
-    ghcr.io/theimpossibleastronaut/dosemu2-container:build-env
+DOSEMU2_SRC=~/src/dosemu2 docker compose run --rm build-env
 
-# Inside the container:
+# Inside the container (already in /workspace):
 ./autogen.sh
 ./default-configure
 make -j$(nproc)
 sudo make install        # if you want to run it inside the container
 dosemu                   # try it
 ```
+
+(Without compose, the equivalent is `docker run --rm -it -v
+~/src/dosemu2:/workspace
+ghcr.io/theimpossibleastronaut/dosemu2-container:build-env`.)
 
 The container provides every build dep (Arch toolchain, DJGPP cross
 compiler, fdpp, dj64, libsearpc, etc.); your host only has Docker.
@@ -170,8 +170,10 @@ The image's entrypoint stats the bind-mounted `/workspace` and
 remaps the in-container `builder` user's UID/GID to match the host
 owner before dropping privileges, so files written from inside the
 container land on the host with correct ownership — no `--user`
-flag, no post-build chown. Override the auto-detection by exporting
-`HOSTUID` / `HOSTGID` in the docker environment if you need to.
+flag, no post-build chown. The `build-env` compose service passes
+`HOSTUID` / `HOSTGID` through, so if the auto-detection ever fails
+(a root-owned source dir, a CI matrix), set them in `.env` to your
+`id -u` / `id -g`.
 
 ## Build from scratch
 
@@ -304,10 +306,36 @@ workflow in the same repo).
 
 ## docker-compose
 
-`docker-compose.yml` defines services that consume `dosemu2:latest`:
+`docker-compose.yml` runs dosemu2 from a published image — no local
+build needed. It pulls from Docker Hub (`andy5995/dosemu2`) by default.
+Three services cover the common cases, so you don't have to remember
+the long `docker run` flag lists:
 
-- `dosemu2` — `ENTRYPOINT ["dosemu"]`; `docker compose run --rm dosemu2` starts dosemu2 in a terminal.
-- `shell` — interactive bash with `/workspace` = your host source, for rebuild iteration inside the container.
+```sh
+# Latest released dosemu2, text mode (default):
+docker compose run --rm dosemu2
 
-Both mount the host source at `/workspace` (override via `DOSEMU2_SRC`
-env) and a named volume at `~/.dosemu` for DOS persistence.
+# Latest dev build from git (override the tag):
+TAG=latest docker compose run --rm dosemu2
+
+# Pass arguments straight to dosemu2:
+docker compose run --rm dosemu2 -td -ks -E ver
+
+# Graphics-mode programs / games (needs xhost — see the X11 section):
+docker compose run --rm gui
+
+# Build dosemu2 from your own source:
+DOSEMU2_SRC=~/src/dosemu2 docker compose run --rm build-env
+```
+
+| Service | What it does |
+|---|---|
+| `dosemu2` | Runs dosemu2 in text mode. Tag is `${TAG}` (default `release`; set `TAG=latest` for the dev build). Extra args pass through to dosemu2. |
+| `gui` | Same image with the X11 socket and `DISPLAY` wired in; opens a shell so you can `dosemu -T`. |
+| `build-env` | `:build-env` image with your source at `/workspace` (`DOSEMU2_SRC`) for building dosemu2 inside the container. |
+
+Copy `.env.example` to `.env` to set `TAG`, the image repository
+(`IMAGE`), the persistence path (`DOSEMU_HOME`), your source
+(`DOSEMU2_SRC`), or build UID/GID (`HOSTUID` / `HOSTGID`) without
+typing them each time — `docker compose` reads `.env` automatically.
+(`.env` is gitignored; `.env.example` is the tracked template.)
