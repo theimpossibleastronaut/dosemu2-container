@@ -41,6 +41,12 @@ docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:latest
 docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:release
 ```
 
+The same `:latest`, `:release`, and `:build-env` images are also
+published to Docker Hub at
+[`andy5995/dosemu2`](https://hub.docker.com/repository/docker/andy5995/dosemu2/general)
+— replace `ghcr.io/theimpossibleastronaut/dosemu2-container` with
+`andy5995/dosemu2` in any command below.
+
 Pass DOS commands the same way you would to `dosemu` on the host:
 
 ```sh

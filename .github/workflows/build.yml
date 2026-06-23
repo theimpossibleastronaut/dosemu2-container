@@ -38,9 +38,11 @@ on:
         required: false
         default: 'devel'
   schedule:
-    # Monthly. Phase 04 takes ~30 min for the djgpp toolchain compile;
-    # don't rerun more often than necessary.
-    - cron: '30 5 1 * *'
+    # Weekly refresh: picks up new Arch base packages and rebuilds
+    # :latest from the dosemu2 devel branch. Phase 04 is now just a
+    # pacman -U of the prebuilt aur-pkgs/, so the cadence is a
+    # freshness choice, not a cost constraint.
+    - cron: '30 5 * * 0'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
