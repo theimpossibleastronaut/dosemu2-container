@@ -97,12 +97,15 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_PAT_TOKEN }}
-      - name: Build & push :04-aur (also tagged :build-env)
+      # Build and load locally first so the entrypoint test runs
+      # against the real image before it's published. Pushed only after
+      # the test passes (next two steps).
+      - name: Build :04-aur (also tagged :build-env)
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile.04-aur
-          push: true
+          load: true
           build-args: BASE=${{ env.IMAGE }}:01-pacman
           # :build-env is the user-facing alias for the build
           # environment (all deps installed, no dosemu2 binary).
@@ -115,7 +118,15 @@ jobs:
             ${{ env.IMAGE }}:build-env
             ${{ env.DH_IMAGE }}:build-env
           cache-from: type=registry,ref=${{ env.IMAGE }}:04-aur
-          cache-to: type=inline
+
+      - name: Test build-env entrypoint permissions
+        run: IMAGE=${{ env.IMAGE }}:04-aur test/entrypoint-perms.sh
+
+      - name: Push :04-aur and :build-env
+        run: |
+          docker push ${{ env.IMAGE }}:04-aur
+          docker push ${{ env.IMAGE }}:build-env
+          docker push ${{ env.DH_IMAGE }}:build-env
 
   build-latest:
     runs-on: ubuntu-24.04

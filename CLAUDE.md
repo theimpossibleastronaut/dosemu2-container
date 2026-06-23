@@ -203,6 +203,16 @@ tags (`:build-env`, `:latest`, `:release`) to `andy5995/dosemu2`.
   ~30-min cost is rebuilding a *vendored package* out of band (see
   "The aur-pkgs/ vendored set") — that's where AUR-upstream quirks and
   the old gotchas land.
+  - **Stale-db gotcha:** rebuilding `:04-aur` (e.g. `make rebuild-aur`)
+    against a *weeks-old* local `:01-pacman` fails — `pacman -U` pulls
+    current versions of the aur-pkgs' runtime deps, but rolling Arch
+    mirrors drop superseded packages, so they 404 (seen: qt6-declarative,
+    xkeyboard-config). Rebuild `:01-pacman` first (`make all` does the
+    chain in order, so it's fine). CI never hits this — it builds a fresh
+    `:01-pacman` each run. To exercise just the build-env *entrypoint*
+    without the full AUR install, build a throwaway image that's only
+    `FROM :01-pacman` + `COPY entrypoint.sh`; that's what
+    `test/entrypoint-perms.sh` needs (base `builder` user + remap tools).
 - **Editing Phase 05** is the dosemu2 build (~3-10 min). Iterate freely
   with `make rebuild-dosemu2`.
 - **Adding a runtime-only dep** belongs in Phase 05's runtime stage's
