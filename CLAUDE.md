@@ -203,13 +203,19 @@ tags (`:build-env`, `:latest`, `:release`) to `andy5995/dosemu2`.
   ~30-min cost is rebuilding a *vendored package* out of band (see
   "The aur-pkgs/ vendored set") — that's where AUR-upstream quirks and
   the old gotchas land.
-  - **Stale-db gotcha:** rebuilding `:04-aur` (e.g. `make rebuild-aur`)
-    against a *weeks-old* local `:01-pacman` fails — `pacman -U` pulls
-    current versions of the aur-pkgs' runtime deps, but rolling Arch
-    mirrors drop superseded packages, so they 404 (seen: qt6-declarative,
-    xkeyboard-config). Rebuild `:01-pacman` first (`make all` does the
-    chain in order, so it's fine). CI never hits this — it builds a fresh
-    `:01-pacman` each run. To exercise just the build-env *entrypoint*
+  - **Stale-db gotcha (mostly handled now):** Phase 04 runs
+    `sudo pacman -Syu` before the `pacman -U`, so a stale db in
+    `:01-pacman` is refreshed to the live mirror on the fly instead of
+    404'ing. Background: the vendored aur-pkgs pull current versions of
+    their official-repo runtime deps, but rolling Arch mirrors drop
+    superseded packages, so a db snapshot that's even minutes behind can
+    404 on the download (seen in CI: gcc-ada, avahi; locally:
+    qt6-declarative, xkeyboard-config). The `-Syu` closes that race for
+    both CI and a weeks-old local `:01` (it just upgrades the stale base
+    first). It's not free, though — against a very old local `:01` that
+    `-Syu` becomes a large upgrade, so rebuilding `:01-pacman` first
+    (`make all` runs the chain in order) is still the faster path. To
+    exercise just the build-env *entrypoint*
     without the full AUR install, build a throwaway image that's only
     `FROM :01-pacman` + `COPY entrypoint.sh`; that's what
     `test/entrypoint-perms.sh` needs (base `builder` user + remap tools).

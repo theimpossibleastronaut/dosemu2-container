@@ -31,7 +31,13 @@ FROM ${BASE}
 # installed-system-wide bytes that would otherwise sit at
 # /opt/aur-pkgs/ as dead weight in :build-env. The PostTransaction
 # hook installed in Phase 01 auto-clears /var/cache/pacman/pkg.
+# -Syu first: the vendored packages pull official-repo runtime deps
+# (gcc-ada, avahi, ...) whose filenames resolve against the db baked
+# into :01-pacman. Rolling Arch can rotate those packages between :01's
+# db sync and this download, 404'ing the stale filenames. Refreshing
+# the db here matches it to the live mirror and closes that race.
 RUN --mount=type=bind,source=aur-pkgs,target=/tmp/aur-pkgs \
+    sudo pacman -Syu --noconfirm && \
     sudo pacman -U --noconfirm /tmp/aur-pkgs/*.pkg.tar.zst
 
 # Runtime entrypoint: remap builder's UID/GID to match the
