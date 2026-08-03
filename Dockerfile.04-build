@@ -53,6 +53,31 @@ RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
  && make -j"$(nproc)" \
  && make install DESTDIR=/install
 
+# The runtime stages COPY this /usr/local wholesale (dosemu2's own
+# runtime libs live alongside the toolchain's), but most of what's
+# under it is build-only: the i686-unknown-linux-gnu binutils
+# cross-tools, dj64dev/smallerc headers and static archives, and the
+# locale/info/man/doc data binutils' own `make install` pulls in.
+# None of that dosemu2 loads at runtime — pruning it here (not in
+# Phase 03) keeps :build-env / :03-toolchain itself untouched for
+# anyone building their own dosemu2 from it.
+RUN rm -rf \
+        /usr/local/bin/i686-unknown-linux-gnu-* \
+        /usr/local/i686-unknown-linux-gnu \
+        /usr/local/smlrc \
+        /usr/local/libexec/thunk_gen \
+        /usr/local/libexec/djstub2 \
+        /usr/local/include \
+        /usr/local/i386-pc-dj64/include \
+        /usr/local/i386-pc-dj64/lib \
+        /usr/local/i386-pc-dj64/lib64/libdj64_s.a \
+        /usr/local/i386-pc-dj64/share \
+        /usr/local/lib/bfd-plugins \
+        /usr/local/share/locale \
+        /usr/local/share/info \
+        /usr/local/share/man \
+        /usr/local/share/doc
+
 # ---------------------------------------------------------------------------
 # Stage 2: runtime — full, GUI-capable. Tagged :latest.
 # ---------------------------------------------------------------------------

@@ -107,6 +107,18 @@ for the non-dev runtime packages.
   strip any in-tree artifacts the host tree carries (e.g. a
   `config.status` with `/workspace` paths left by an in-tree configure
   in the `:build-env` container).
+- **`/usr/local` is pruned in the `builder` stage, not `:03-toolchain`.**
+  Right after `make install DESTDIR=/install`, a `RUN rm -rf` strips
+  the binutils cross-tools, dj64dev/smallerc headers and static
+  archives, and locale/info/man/doc data — none of it is loaded at
+  runtime, but `:03-toolchain`/`:build-env` needs all of it, so the
+  prune happens on the `builder` stage's own copy, after which both
+  runtime stages `COPY --from=builder /usr/local /usr/local`. Cuts
+  `:latest-headless` from ~250 MB to ~77 MB. If a future toolchain
+  component adds a new runtime-needed file under a pruned path (e.g.
+  a new `.so` under `/usr/local/i386-pc-dj64/lib64`), the prune list
+  needs a matching exception or the file silently disappears from the
+  runtime images.
 
 ## ARG BASE default
 

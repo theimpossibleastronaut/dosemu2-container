@@ -220,8 +220,8 @@ lists.")
 | `dosemu2-builder:01-base` | 1.1 GB | Alpine base + apk build deps (incl. GUI build deps) |
 | `dosemu2-builder:02-binutils` | 1.3 GB | + `binutils-gdb` built for `i686-unknown-linux-gnu` |
 | `dosemu2-builder:03-toolchain` (also `:build-env`) | 1.3 GB | + `thunk_gen`, `fdpp`, `smallerc`, `djstub`, `dj64dev`, `comcom64`, `libsearpc`, all built from source. The user-facing name for this image is `:build-env`; `:03-toolchain` remains as the chain-position checkpoint. |
-| `dosemu2:latest` | 0.29 GB | **Runtime only.** Slim `alpine:3.21` + dosemu2 from git HEAD, with SDL3/X11 GUI support. No build toolchain. |
-| `dosemu2:latest-headless` | 0.24 GB | **Runtime only.** Same build, without SDL3/X11 — text mode only, smallest image. |
+| `dosemu2:latest` | 118 MB | **Runtime only.** Slim `alpine:3.21` + dosemu2 from git HEAD, with SDL3/X11 GUI support. No build toolchain. |
+| `dosemu2:latest-headless` | 77 MB | **Runtime only.** Same build, without SDL3/X11 — text mode only, smallest image. |
 | `dosemu2:release` | 0.4 GB | **Runtime only.** Slim `ubuntu:24.04` + dosemu2 from the PPA. |
 
 The `dosemu2-builder` images are the *build environment*; the
@@ -326,6 +326,15 @@ in the same repo), and mirror the user-facing tags to Docker Hub.
   the chain, so it's isolated in Phase 02 — a failure there doesn't
   force Phase 01 or the rest of the toolchain (Phase 03) to redo any
   work.
+- **`/usr/local` gets pruned before the runtime `COPY`.** `:03-toolchain`
+  keeps its full `/usr/local` — binutils cross-tools, `dj64dev`/smallerc
+  headers and static archives, locale/info/man data — because
+  `:build-env` users need all of it. Phase 04's `builder` stage deletes
+  that build-only bulk (~160 MB) right after `make install`, before
+  either runtime stage's `COPY --from=builder /usr/local /usr/local`,
+  since none of it is loaded at runtime. This is why `:latest-headless`
+  is 77 MB instead of the ~250 MB a naive copy of the whole tree
+  produces.
 
 ## docker-compose
 
