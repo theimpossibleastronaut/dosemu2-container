@@ -26,7 +26,7 @@ if [ -n "$detected_uid" ] && [ "$detected_uid" != "0" ] && [ "$detected_uid" != 
   groupmod -g "$detected_gid" builder >/dev/null 2>&1 || true
   usermod -u "$detected_uid" -g "$detected_gid" builder >/dev/null 2>&1 || true
   # The home dir's ownership wasn't recursively chowned by usermod;
-  # fix it so caches (paru, cargo) are writable by the new IDs.
+  # fix it so anything already under it is writable by the new IDs.
   chown -R "$detected_uid:$detected_gid" /home/builder
 elif [ "$detected_uid" = "0" ] && [ -n "$(ls -A "$PWD" 2>/dev/null)" ]; then
   # A root-owned, non-empty workdir is almost certainly a bind-mounted

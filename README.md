@@ -52,8 +52,8 @@ docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:latest
 docker run --rm -it ghcr.io/theimpossibleastronaut/dosemu2-container:release
 ```
 
-The same `:latest`, `:release`, and `:build-env` images are also
-published to Docker Hub at
+The same `:latest`, `:latest-headless`, `:release`, and `:build-env`
+images are also published to Docker Hub at
 [`andy5995/dosemu2`](https://hub.docker.com/repository/docker/andy5995/dosemu2/general)
 — replace `ghcr.io/theimpossibleastronaut/dosemu2-container` with
 `andy5995/dosemu2` in any command below.
@@ -283,7 +283,7 @@ make all BUILDER_IMAGE=myorg/dosemu2-builder RUNTIME_IMAGE=myorg/dosemu2
 
 - **`.github/workflows/build.yml`** — sequential jobs that build &
   push the chain (01 → 02 → 03 → latest/latest-headless). Each phase
-  `needs:` the previous one so the next job only starts after the
+  `needs:` the previous one, so the next job only starts after the
   prior image is pushed to GHCR. `:03-toolchain` / `:build-env` is
   built locally first and published only if
   `test/entrypoint-perms.sh` passes against it. Triggers on push to

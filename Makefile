@@ -9,7 +9,7 @@
 # https://github.com/dosemu2/dosemu2/blob/devel/Dockerfile.alpine
 #
 # Targets:
-#   make all            — chain through every phase, ending at :latest
+#   make all             — chain through every phase, ending at :latest
 #   make build-env       — stop at the toolchain checkpoint
 #   make headless        — build only the :latest-headless target
 #   make shell           — drop into an interactive shell in :latest

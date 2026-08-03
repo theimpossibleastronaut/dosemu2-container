@@ -61,8 +61,10 @@ RUN apk add --no-cache \
 RUN apk add --no-cache libb64-dev \
         --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
 
-# sdl3-dev is edge/community-only as of Alpine 3.21 (dosemu2 needs
-# SDL3, not SDL2 — see Dockerfile.04-build's runtime stage comment).
+# sdl3-dev is edge/community-only as of Alpine 3.21. dosemu2's
+# configure requires SDL3 specifically; the runtime stages in
+# Dockerfile.04-build pull the matching non-dev sdl3 package the
+# same way.
 RUN apk add --no-cache sdl3-dev \
         --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community
 
