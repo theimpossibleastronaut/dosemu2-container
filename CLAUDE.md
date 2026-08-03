@@ -70,19 +70,48 @@ big Dockerfile like upstream's): splitting it into cacheable phases
 means a failure partway through a rebuild doesn't discard earlier
 phases' work.
 
-## :latest vs :latest-headless share one dosemu2 build
+## :latest and :latest-headless are compiled separately
 
-dosemu2's `configure` autodetects SDL3/X11 at build time. Phase 04
-builds dosemu2 once in the `builder` stage (which has the GUI build
-deps from Phase 01) and copies that single `/install` tree into two
-different runtime stages:
+dosemu2's `configure` picks its plugin set by autodetecting libs, and
+the binary then calls `load_plugin()` for every plugin it was compiled
+with. **Sharing one build between the two images does not work.** The
+first cut did, and the headless image dlopen'd sdl/X/XKmaps/alsa/
+fluidsynth on every startup, printing an `ERROR` per failure because
+those libs are absent there. Deleting the plugin `.so` files is not a
+fix either — `load_plugin()` reports a missing file just as loudly.
 
-- `runtime` — installs SDL3/X11/audio runtime libs. Tagged `:latest`.
-- `runtime-headless` — skips them. Tagged `:latest-headless`.
+So Phase 04 has two builder stages:
 
-dosemu2's video backends are dlopen'd plugins, so the headless runtime
-still runs text-mode-only without erroring on the missing libs. Pick
-the stage with `--target runtime` / `--target runtime-headless`.
+- `builder` — full toolchain, GUI/audio autodetected. Feeds `runtime`
+  (`:latest`).
+- `builder-headless` — `apk del`s the GUI/audio `-dev` packages before
+  `./configure`, so `PLUGINSUBDIRS` omits X, Xkmaps, sdl, sdl3, alsa,
+  ladspa, gpm, libao and fluidsynth. Feeds `runtime-headless`
+  (`:latest-headless`).
+
+The cost is a second dosemu2 compile; the benefit is a headless image
+that starts without error spam. Pick the image with `--target runtime`
+/ `--target runtime-headless`.
+
+`runtime-common` holds everything the two share (base libs,
+`/usr/local`, the `dosuser` account, `ENTRYPOINT`) so they can't drift
+apart — a drift bug that already bit once, when the GUI stage listed
+`gpm` (the daemon) instead of `gpm-libs` (which actually ships
+`libgpm.so.2`) and left `libplugin_gpm.so` orphaned in `:latest`.
+
+**Verifying a runtime image after changing deps or plugins:**
+
+```sh
+docker run --rm --entrypoint sh dosemu2:latest-headless -c \
+  'for so in /usr/local/lib/dosemu/*.so; do ldd "$so" 2>&1 \
+   | grep -o "Error loading shared library [^:]*" | sed "s|^|$so: |"; done'
+```
+
+Any output is an orphaned plugin. Also run `docker run --rm IMAGE -td
+-ks -E ver` **without** `-dumb` and check for `ERROR:` lines — `-dumb`
+skips the video/sound plugin path and hides exactly this class of bug.
+Only `/dev/kvm`, X-display, sound-device and `kbd: EOF from stdin`
+errors are expected in a container.
 
 ## SDL3 and libb64 come from Alpine's edge repos
 

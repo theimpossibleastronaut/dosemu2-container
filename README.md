@@ -5,8 +5,8 @@ four flavors:
 
 - **`:latest`** — Alpine + dosemu2 from upstream git (`devel`), built
   with GUI (SDL3/X11) support.
-- **`:latest-headless`** — the same build without GUI support; much
-  smaller, text-mode only.
+- **`:latest-headless`** — the same source compiled without GUI
+  support; much smaller, text-mode only.
 - **`:release`** — Ubuntu + dosemu2 from the official PPA, the
   latest released version.
 - **`:build-env`** — the toolchain `:latest`/`:latest-headless` are
@@ -221,7 +221,7 @@ lists.")
 | `dosemu2-builder:02-binutils` | 1.3 GB | + `binutils-gdb` built for `i686-unknown-linux-gnu` |
 | `dosemu2-builder:03-toolchain` (also `:build-env`) | 1.3 GB | + `thunk_gen`, `fdpp`, `smallerc`, `djstub`, `dj64dev`, `comcom64`, `libsearpc`, all built from source. The user-facing name for this image is `:build-env`; `:03-toolchain` remains as the chain-position checkpoint. |
 | `dosemu2:latest` | 118 MB | **Runtime only.** Slim `alpine:3.21` + dosemu2 from git HEAD, with SDL3/X11 GUI support. No build toolchain. |
-| `dosemu2:latest-headless` | 77 MB | **Runtime only.** Same build, without SDL3/X11 — text mode only, smallest image. |
+| `dosemu2:latest-headless` | 73 MB | **Runtime only.** Compiled without SDL3/X11/audio — text mode only, smallest image. |
 | `dosemu2:release` | 0.4 GB | **Runtime only.** Slim `ubuntu:24.04` + dosemu2 from the PPA. |
 
 The `dosemu2-builder` images are the *build environment*; the
@@ -308,15 +308,18 @@ in the same repo), and mirror the user-facing tags to Docker Hub.
   `libb64`; both get pulled from `edge/community` and `edge/testing`
   respectively via an explicit `--repository=` flag on top of the
   3.21 base, same as upstream's Dockerfile.alpine does for `libb64`.
-- **`:latest` vs `:latest-headless` share one build.** dosemu2's
-  `configure` autodetects SDL3/X11 at build time, so Phase 04 builds
-  dosemu2 once (in the `builder` stage, which has the GUI deps) and
-  then copies that single `/install` tree into two different runtime
-  stages — `runtime` (with SDL3/X11 installed, tagged `:latest`) and
-  `runtime-headless` (without them, tagged `:latest-headless`).
-  dosemu2's video backends are dlopen'd plugins, so the headless
-  runtime still runs text-mode-only without erroring on the missing
-  libs.
+- **`:latest` and `:latest-headless` are compiled separately.**
+  dosemu2's `configure` decides which plugins to build by autodetecting
+  libs, and the resulting binary calls `load_plugin()` for every plugin
+  it was compiled with. Reusing one build for both images therefore
+  made the headless one `dlopen` sdl/X/XKmaps/alsa/fluidsynth at every
+  startup and print an `ERROR` per failure, since those libs aren't
+  installed there. Deleting the plugin files doesn't help —
+  `load_plugin()` reports a missing file just as loudly. So Phase 04
+  has a second builder stage that removes the GUI/audio `-dev` packages
+  before `./configure`, which drops those plugins from the build
+  entirely. It costs a second dosemu2 compile and yields a headless
+  image that starts clean.
 - **Source mount is read-only at build time.** Phase 04 untars the
   source (`.git` included) into `/root/dosemu2` inside the builder
   stage before running `autogen.sh` / `configure` / `make`, so your
@@ -333,7 +336,7 @@ in the same repo), and mirror the user-facing tags to Docker Hub.
   that build-only bulk (~160 MB) right after `make install`, before
   either runtime stage's `COPY --from=builder /usr/local /usr/local`,
   since none of it is loaded at runtime. This is why `:latest-headless`
-  is 77 MB instead of the ~250 MB a naive copy of the whole tree
+  is 73 MB instead of the ~250 MB a naive copy of the whole tree
   produces.
 
 ## docker-compose

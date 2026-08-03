@@ -6,23 +6,28 @@
 # Input:   dosemu2-builder:03-toolchain (Alpine + dj64dev/comcom64/
 #          fdpp/libsearpc toolchain, adapted from dosemu2 upstream's
 #          Dockerfile.alpine by Stas Sergeev / stsp)
-# Outputs: dosemu2-builder:04-build, dosemu2:latest, dosemu2:latest-headless
+# Outputs: dosemu2:latest, dosemu2:latest-headless
 #
-# Three stages:
-#   builder            — full :03-toolchain env, which has the GUI
-#                         (SDL3/X11) build deps too. Untars host source
-#                         (passed via additional_contexts=dosemu2),
-#                         autogen + configure + make + make install
-#                         DESTDIR=/install. dosemu2's configure
-#                         autodetects SDL3/X11 and builds GUI support
-#                         in — one build serves both runtime targets.
-#   runtime            — fresh alpine:3.21 base + SDL3/X11/audio runtime
-#                         libs. Tagged :latest — the default, GUI-capable
-#                         image.
-#   runtime-headless   — same base, WITHOUT SDL3/X11 — dosemu2's video
-#                         backends are dlopen'd plugins, so the binary
-#                         still runs text-mode-only without them. Tagged
-#                         :latest-headless. Pick --target at build time.
+# Stages:
+#   localtree          — :03-toolchain with the build-only parts of
+#                         /usr/local deleted. Both runtime images copy
+#                         their /usr/local from here, so the prune list
+#                         is written once.
+#   builder            — dosemu2 built against the full toolchain, with
+#                         SDL3/X11/ALSA/fluidsynth autodetected. Feeds
+#                         :latest.
+#   builder-headless   — the same source built after removing the
+#                         GUI/audio dev packages, so configure omits
+#                         those plugins. Feeds :latest-headless.
+#   runtime-common     — fresh alpine:3.21 base + the libs, /usr/local,
+#                         user and entrypoint both images share. Not
+#                         published on its own.
+#   runtime            — runtime-common + SDL3/X11/audio libs + the GUI
+#                         build. Tagged :latest.
+#   runtime-headless   — runtime-common + the headless build. Tagged
+#                         :latest-headless.
+#
+# Pick the image with --target runtime / --target runtime-headless.
 #
 # The published images drop binutils, meson, git, and every other
 # build-only tool that only :build-env needs.
@@ -32,35 +37,18 @@
 ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:03-toolchain
 
 # ---------------------------------------------------------------------------
-# Stage 1: builder
+# Stage 1: localtree — /usr/local with the build-only bulk removed.
+#
+# Most of :03-toolchain's /usr/local is build-only: the
+# i686-unknown-linux-gnu binutils cross-tools, dj64dev/smallerc headers
+# and static archives, and the locale/info/man/doc data binutils' own
+# `make install` pulls in. dosemu2 loads none of it at runtime. Pruning
+# in its own stage (rather than in Phase 03) leaves :build-env intact
+# for anyone building their own dosemu2 from it, and keeps this list in
+# one place instead of once per builder.
 # ---------------------------------------------------------------------------
-FROM ${BASE} AS builder
+FROM ${BASE} AS localtree
 
-# Bind-mount host source RO, untar into a writable scratch dir so the
-# build doesn't pollute the host with .o files / autogen output.
-# git clean -dfx (after untar, before configure) builds from pristine
-# tracked source — strips any in-tree artifacts the host tree carries,
-# e.g. config.status with /workspace paths left by an in-tree configure
-# in the build-env container.
-RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
-    rm -rf /root/dosemu2 \
- && mkdir -p /root/dosemu2 \
- && (cd /src && tar -cf - .) | tar -xf - -C /root/dosemu2 \
- && cd /root/dosemu2 \
- && git clean -dfx \
- && ./autogen.sh \
- && ./configure \
- && make -j"$(nproc)" \
- && make install DESTDIR=/install
-
-# The runtime stages COPY this /usr/local wholesale (dosemu2's own
-# runtime libs live alongside the toolchain's), but most of what's
-# under it is build-only: the i686-unknown-linux-gnu binutils
-# cross-tools, dj64dev/smallerc headers and static archives, and the
-# locale/info/man/doc data binutils' own `make install` pulls in.
-# None of that dosemu2 loads at runtime — pruning it here (not in
-# Phase 03) keeps :build-env / :03-toolchain itself untouched for
-# anyone building their own dosemu2 from it.
 RUN rm -rf \
         /usr/local/bin/i686-unknown-linux-gnu-* \
         /usr/local/i686-unknown-linux-gnu \
@@ -79,51 +67,78 @@ RUN rm -rf \
         /usr/local/share/doc
 
 # ---------------------------------------------------------------------------
-# Stage 2: runtime — full, GUI-capable. Tagged :latest.
+# Stage 2: builder — GUI-capable dosemu2, for :latest.
+#
+# Bind-mount host source RO, untar into a writable scratch dir so the
+# build doesn't pollute the host with .o files / autogen output.
+# git clean -dfx (after untar, before configure) builds from pristine
+# tracked source — strips any in-tree artifacts the host tree carries,
+# e.g. config.status with /workspace paths left by an in-tree configure
+# in the build-env container.
 # ---------------------------------------------------------------------------
-FROM alpine:3.21 AS runtime
+FROM ${BASE} AS builder
 
-RUN apk add --no-cache \
-        elfutils \
-        jansson \
-        glib \
-        slang \
-        bash \
-        json-c \
-        libslirp \
-        gawk \
-        libseccomp \
-        alsa-lib \
-        fluidsynth \
+RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
+    rm -rf /root/dosemu2 \
+ && mkdir -p /root/dosemu2 \
+ && (cd /src && tar -cf - .) | tar -xf - -C /root/dosemu2 \
+ && cd /root/dosemu2 \
+ && git clean -dfx \
+ && ./autogen.sh \
+ && ./configure \
+ && make -j"$(nproc)" \
+ && make install DESTDIR=/install
+
+# ---------------------------------------------------------------------------
+# Stage 3: builder-headless — dosemu2 with no GUI/audio plugins.
+#
+# dosemu2 decides which plugins to build by autodetecting libs at
+# configure time, and the resulting binary calls load_plugin() for each
+# one it was compiled with. Reusing the GUI build for the headless
+# image therefore made it dlopen sdl/X/XKmaps/alsa/fluidsynth at every
+# startup and print an ERROR per failure, since those libs are absent
+# there. Deleting the plugin files doesn't help — load_plugin() reports
+# a missing file just as loudly.
+#
+# Removing the dev packages before ./configure is what actually drops
+# them: PLUGINSUBDIRS then omits X, Xkmaps, sdl, sdl3, alsa, ladspa,
+# gpm, libao and fluidsynth, and nothing tries to load them at runtime.
+# This costs a second full dosemu2 compile, which is the price of a
+# headless image that starts clean.
+# ---------------------------------------------------------------------------
+FROM ${BASE} AS builder-headless
+
+RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
+    apk del \
+        sdl3-dev \
+        libx11-dev \
+        libxext-dev \
+        alsa-lib-dev \
+        fluidsynth-dev \
+        gpm-dev \
+        libsamplerate-dev \
+        vde2-dev \
         ladspa \
-        gpm \
-        libsamplerate \
-        vde2 \
-        libx11 \
-        libxext
-RUN apk add --no-cache libb64 \
-        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
-RUN apk add --no-cache sdl3 \
-        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community
-
-# The toolchain's own runtime libs (libsearpc, libfdpp, libdj64,
-# comcom64) live under /usr/local in :03-toolchain, same as upstream's
-# single-stage COPY --from=builder /usr/local /usr/local.
-COPY --from=builder /usr/local /usr/local
-COPY --from=builder /install /
-
-RUN addgroup -S dosuser \
- && adduser -S -G dosuser -h /home/dosuser dosuser \
- && install -d -m 0755 -o dosuser -g dosuser /home/dosuser/.dosemu
-
-USER dosuser
-WORKDIR /home/dosuser
-ENTRYPOINT ["dosemu"]
+ && rm -rf /root/dosemu2 \
+ && mkdir -p /root/dosemu2 \
+ && (cd /src && tar -cf - .) | tar -xf - -C /root/dosemu2 \
+ && cd /root/dosemu2 \
+ && git clean -dfx \
+ && ./autogen.sh \
+ && ./configure \
+ && make -j"$(nproc)" \
+ && make install DESTDIR=/install
 
 # ---------------------------------------------------------------------------
-# Stage 3: runtime-headless — no SDL3/X11. Tagged :latest-headless.
+# Stage 4: runtime-common — everything both runtime images share.
+#
+# Defined once so the two published images can't drift apart. They did:
+# the GUI list carried `gpm` (the daemon) while the runtime lib
+# libgpm.so.2 ships in `gpm-libs`, so libplugin_gpm.so was orphaned in
+# :latest. Adding a dep here now reaches both images; a GUI-only dep
+# goes in the `runtime` stage below.
 # ---------------------------------------------------------------------------
-FROM alpine:3.21 AS runtime-headless
+FROM alpine:3.21 AS runtime-common
 
 RUN apk add --no-cache \
         elfutils \
@@ -138,8 +153,11 @@ RUN apk add --no-cache \
 RUN apk add --no-cache libb64 \
         --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
 
-COPY --from=builder /usr/local /usr/local
-COPY --from=builder /install /
+# The toolchain's own runtime libs (libsearpc, libfdpp, libdj64,
+# comcom64) live under /usr/local, same as upstream's single-stage
+# COPY --from=builder /usr/local /usr/local — minus the build-only
+# parts stage 1 removed.
+COPY --from=localtree /usr/local /usr/local
 
 RUN addgroup -S dosuser \
  && adduser -S -G dosuser -h /home/dosuser dosuser \
@@ -148,3 +166,35 @@ RUN addgroup -S dosuser \
 USER dosuser
 WORKDIR /home/dosuser
 ENTRYPOINT ["dosemu"]
+
+# ---------------------------------------------------------------------------
+# Stage 5: runtime — GUI-capable. Tagged :latest.
+#
+# gpm-libs, not gpm: the latter is only the console mouse *daemon*
+# (/usr/sbin/gpm), which nothing in the container runs, while
+# libplugin_gpm.so needs libgpm.so.2 out of gpm-libs.
+# ---------------------------------------------------------------------------
+FROM runtime-common AS runtime
+
+USER root
+RUN apk add --no-cache \
+        alsa-lib \
+        fluidsynth \
+        ladspa \
+        gpm-libs \
+        libsamplerate \
+        vde2 \
+        libx11 \
+        libxext
+RUN apk add --no-cache sdl3 \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community
+USER dosuser
+
+COPY --from=builder /install /
+
+# ---------------------------------------------------------------------------
+# Stage 6: runtime-headless — no SDL3/X11/audio. Tagged :latest-headless.
+# ---------------------------------------------------------------------------
+FROM runtime-common AS runtime-headless
+
+COPY --from=builder-headless /install /

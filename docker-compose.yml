@@ -26,8 +26,12 @@ services:
   # `docker compose run --rm gui`, and at the shell run `dosemu -T`.
   # For game files to be reachable from the host, point DOSEMU_HOME at
   # a host path (e.g. DOSEMU_HOME=$HOME/.dosemu in .env).
+  #
+  # GUI_TAG, not TAG: :latest-headless is built without SDL3/X11, so
+  # sharing TAG would silently point this service at an image that
+  # can't open a window.
   gui:
-    image: ${IMAGE:-andy5995/dosemu2}:${TAG:-release}
+    image: ${IMAGE:-andy5995/dosemu2}:${GUI_TAG:-release}
     entrypoint: /bin/bash
     stdin_open: true
     tty: true

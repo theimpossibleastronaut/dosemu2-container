@@ -106,7 +106,7 @@ release:
 	  -t $(RUNTIME_IMAGE):release \
 	  .
 
-# Convenience: rebuild only the toolchain phase on top of :01-base,
+# Convenience: rebuild only the toolchain phase on top of :02-binutils,
 # e.g. after bumping a component's git ref. --no-cache forces every
 # source clone in Phase 03 to refetch.
 rebuild-toolchain:
