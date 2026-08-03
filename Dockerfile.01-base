@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 01 — Alpine base + the apk packages every later phase needs to
+# build dosemu2's toolchain and runtime deps from source.
+#
+# Output image: dosemu2-builder:01-base
+#
+# This chain adapts dosemu2 upstream's own Dockerfile.alpine
+# (https://github.com/dosemu2/dosemu2/blob/devel/Dockerfile.alpine),
+# written by Stas Sergeev (stsp) — see
+# https://github.com/theimpossibleastronaut/dosemu2-container/issues/10.
+# Alpine has no AUR-equivalent binary repo for the DJGPP-style
+# cross-toolchain dosemu2 needs, so every phase here builds its piece
+# from source instead of installing a prebuilt package. Splitting the
+# single upstream Dockerfile into phases means a failure partway
+# through doesn't force a full rebuild from scratch.
+#
+# Stable layer. Rarely needs rebuilding.
+
+FROM alpine:3.21
+
+RUN apk add --no-cache \
+        build-base \
+        meson \
+        git \
+        autoconf \
+        bash \
+        flex \
+        bison \
+        texinfo \
+        nasm \
+        pkgconf \
+        elfutils-dev \
+        automake \
+        ctags \
+        jansson-dev \
+        libtool \
+        glib-dev \
+        json-c-dev \
+        libslirp-dev \
+        gawk \
+        libseccomp-dev \
+        slang-dev \
+        shadow \
+        util-linux \
+        \
+        `# GUI build deps, not in upstream's headless Dockerfile.alpine.` \
+        `# We build dosemu2 with GUI support and produce both a full` \
+        `# (:latest) and headless (:latest-headless) runtime from it.` \
+        alsa-lib-dev \
+        fluidsynth-dev \
+        ladspa \
+        gpm-dev \
+        libsamplerate-dev \
+        vde2-dev \
+        libx11-dev \
+        libxext-dev
+
+# libb64-dev isn't in Alpine's stable repos yet; upstream's
+# Dockerfile.alpine pulls it from edge/testing too.
+RUN apk add --no-cache libb64-dev \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
+
+# sdl3-dev is edge/community-only as of Alpine 3.21 (dosemu2 needs
+# SDL3, not SDL2 — see Dockerfile.04-build's runtime stage comment).
+RUN apk add --no-cache sdl3-dev \
+        --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community
+
+WORKDIR /root

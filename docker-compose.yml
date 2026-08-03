@@ -3,6 +3,7 @@
 #
 #   docker compose run --rm dosemu2                  # latest release, text mode
 #   TAG=latest docker compose run --rm dosemu2       # latest dev build
+#   TAG=latest-headless docker compose run --rm dosemu2  # smallest, no GUI support
 #   docker compose run --rm dosemu2 -td -ks -E ver   # pass args to dosemu2
 #   docker compose run --rm gui                      # graphics (X11) — then run `dosemu -T`
 #   docker compose run --rm build-env                # build from your own source

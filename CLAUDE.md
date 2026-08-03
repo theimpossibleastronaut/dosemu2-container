@@ -5,148 +5,122 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A phased Docker build of [dosemu2](https://github.com/dosemu2/dosemu2)
-from upstream git on Arch Linux, plus a parallel Ubuntu+PPA build of
+from upstream git on Alpine Linux, plus a parallel Ubuntu+PPA build of
 the latest released version. Outputs:
 
-- **`dosemu2:latest`** — slim Arch runtime + dosemu2 from git HEAD (multi-stage)
-- **`dosemu2:release`** — slim Ubuntu runtime + dosemu2 from the PPA (multi-stage)
-- **`dosemu2-builder:01-pacman` / `:04-aur`** — intermediate builder images
+- **`dosemu2:latest`** — slim Alpine runtime + dosemu2 from git HEAD,
+  with SDL3/X11 GUI support (multi-stage)
+- **`dosemu2:latest-headless`** — same build, without SDL3/X11 —
+  smallest, text-mode only
+- **`dosemu2:release`** — slim Ubuntu runtime + dosemu2 from the PPA
+- **`dosemu2-builder:01-base` / `:03-toolchain`** — intermediate builder images
 
 These also push to `ghcr.io/theimpossibleastronaut/dosemu2-container:*`
-on the same names. The `:04-aur` image additionally pushes under the
-user-facing alias `:build-env` (same digest) — that's the tag the
+on the same names. The `:03-toolchain` image additionally pushes under
+the user-facing alias `:build-env` (same digest) — that's the tag the
 README points users at when they want to bind-mount their dosemu2
-source and build inside the container. Keep `:04-aur` referenced from
-the chain-position docs (Makefile target, phase tables); use
+source and build inside the container. Keep `:03-toolchain` referenced
+from the chain-position docs (Makefile target, phase tables); use
 `:build-env` in user-facing prose and examples.
 
-The three **user-facing** tags (`:latest`, `:release`, `:build-env`)
-are also mirrored to **Docker Hub** at `docker.io/andy5995/dosemu2`
-(secrets `DOCKER_HUB_USERNAME` / `DOCKER_PAT_TOKEN`, `DH_IMAGE` env in
-the workflows). The intermediate checkpoints `:01-pacman` / `:04-aur`
-stay GHCR-only — they're only ever pulled as `BASE` from GHCR
-(hardcoded in the Dockerfiles), so Docker Hub doesn't need them.
+The Alpine chain is adapted from dosemu2 upstream's own
+[`Dockerfile.alpine`](https://github.com/dosemu2/dosemu2/blob/devel/Dockerfile.alpine),
+written by Stas Sergeev (stsp) — see
+[issue #10](https://github.com/theimpossibleastronaut/dosemu2-container/issues/10).
+Credit him in any user-facing docs that describe the toolchain build.
+
+The three **user-facing** tags (`:latest`, `:latest-headless`,
+`:release`, `:build-env`) are also mirrored to **Docker Hub** at
+`docker.io/andy5995/dosemu2` (secrets `DOCKER_HUB_USERNAME` /
+`DOCKER_PAT_TOKEN`, `DH_IMAGE` env in the workflows). The intermediate
+checkpoints `:01-base` / `:02-binutils` / `:03-toolchain` stay
+GHCR-only — they're only ever pulled as `BASE` from GHCR (hardcoded
+in the Dockerfiles), so Docker Hub doesn't need them.
 
 ## Two image namespaces, intentionally
 
 | Repo | Purpose |
 |---|---|
-| `dosemu2-builder:*` | Build environment. Has the full toolchain (Arch base-devel, paru, DJGPP cross compiler, etc.) |
+| `dosemu2-builder:*` | Build environment. Has the full toolchain (binutils, dj64dev, comcom64, fdpp, etc.) |
 | `dosemu2:*` | Runtime. Multi-stage final stage with ONLY the binary + runtime libs. No toolchain. |
 
 `docker images` then makes the distinction obvious. The Makefile uses
 `BUILDER_IMAGE` and `RUNTIME_IMAGE` variables (both overridable) so
 forks can publish under their own namespaces.
 
-## The build chain (01 → 04 → 05)
+## The build chain (01 → 02 → 03 → 04)
 
-The chain is **three phases**: `:01-pacman → :04-aur → :latest`, in
-both CI and the Makefile. Phase 04 builds directly on `:01-pacman`.
+| Phase | Tag | What |
+|---|---|---|
+| 01 | `:01-base` | Alpine base + apk build deps (incl. GUI build deps) |
+| 02 | `:02-binutils` | + `binutils-gdb` built for `i686-unknown-linux-gnu` — the slowest, most network-fragile step, isolated so a failure here doesn't force Phase 01 or 03 to redo work |
+| 03 | `:03-toolchain` (= `:build-env`) | + `thunk_gen`, `fdpp`, `smallerc`, `djstub`, `dj64dev`, `comcom64`, `libsearpc`, each in its own `RUN` so one component's cache doesn't invalidate the others |
+| 04 | `dosemu2:latest` / `:latest-headless` | Multi-stage: builder bind-mounts dosemu2 source and builds once; two runtime stages (`runtime` / `runtime-headless`) copy the same `/install` tree into different Alpine bases |
 
-The `01 → 04` numbering gap is historical: phases 02 (paru bootstrap)
-and 03 (djgpp-djcrx bootstrap) were removed once their outputs moved
-into the prebuilt `aur-pkgs/` set (refactor commits `928dc5c` /
-`cb57d0a` / `d326df4`; the `Dockerfile.02-paru` / `Dockerfile.03-djcrx`
-files and their Makefile targets were deleted afterward). The
-surviving tags kept their numbers because they're published GHCR
-identities.
+`make all` runs `01 → 02 → 03 → 04` (target `runtime`) and is the
+normal local validation path. `make headless` builds just the
+`runtime-headless` target. `Dockerfile.release` is a parallel,
+single-Dockerfile path (Ubuntu + PPA), independent of the Alpine
+chain.
 
-| Phase | Tag | Cost | What |
-|---|---|---|---|
-| 01 | `:01-pacman` | ~3 min | Arch base + pacman deps + builder user + parallelism config |
-| 04 | `:04-aur` (= `:build-env`) | **seconds** | `pacman -U` the vendored `aur-pkgs/` on top of `:01`. No source builds |
-| 05 | `:latest` | ~3-10 min | Multi-stage: builder bind-mounts dosemu2 source, runtime is slim Arch |
+Alpine has no AUR-equivalent binary repo for this toolchain, so unlike
+the old Arch chain, nothing here is vendored — every phase compiles
+its piece from source. That's why the chain exists at all (vs. one
+big Dockerfile like upstream's): splitting it into cacheable phases
+means a failure partway through a rebuild doesn't discard earlier
+phases' work.
 
-The ~30-min cost that used to live in Phase 04 (compiling djgpp-gcc,
-fdpp, etc.) now happens **out of band** when refreshing a vendored
-package — see "The aur-pkgs/ vendored set" below. The image chain
-itself no longer compiles any AUR package, and (since Phase 03 is
-gone) no longer fetches anything from delorie.com.
+## :latest vs :latest-headless share one dosemu2 build
 
-`make all` runs `01 → 04 → 05` and is the normal local validation
-path. `Dockerfile.release` is a parallel, single-Dockerfile path
-(Ubuntu + PPA), independent of the Arch chain.
+dosemu2's `configure` autodetects SDL3/X11 at build time. Phase 04
+builds dosemu2 once in the `builder` stage (which has the GUI build
+deps from Phase 01) and copies that single `/install` tree into two
+different runtime stages:
 
-## The aur-pkgs/ vendored package set
+- `runtime` — installs SDL3/X11/audio runtime libs. Tagged `:latest`.
+- `runtime-headless` — skips them. Tagged `:latest-headless`.
 
-`aur-pkgs/` holds **prebuilt** Arch packages (`.pkg.tar.zst`, tracked
-in Git LFS): the full DJGPP toolchain (`djgpp-gcc`, `djgpp-binutils`,
-`djgpp-djcrx`), `paru`, `fdpp`, `dj64-git`, `comcom*-git`, `munt`,
-`libsearpc`, `nasm-segelf-git`, etc. Phase 04 bind-mounts this dir and
-`pacman -U`'s the whole glob — no compiling. See `aur-pkgs/README.md`.
+dosemu2's video backends are dlopen'd plugins, so the headless runtime
+still runs text-mode-only without erroring on the missing libs. Pick
+the stage with `--target runtime` / `--target runtime-headless`.
 
-Refreshing a package (build out of band, then vendor):
+## SDL3 and libb64 come from Alpine's edge repos
 
-- The `build-aur-pkg.yml` workflow (Actions → "Build an AUR package")
-  builds it inside `:build-env` and uploads the `.zst` as an artifact;
-  or build locally in `:build-env` (paru is present). Add the `.zst`
-  to `aur-pkgs/`, remove the old one, commit. The next `build.yml` run
-  picks it up via the `aur-pkgs/**` path trigger.
-- This out-of-band build is where the **old Phase-04 gotchas now
-  live**: the gcc-14 `-std=gnu17` wrapper for `djgpp-djcrx 2.05`'s
-  K&R declarations under rolling Arch's gcc 16+/C23; the `comcom32`
-  vs `comcom64-git` `pacman -Rdd` dance (both `provide=comcom64`);
-  the djgpp-djcrx ⇄ djgpp-gcc bootstrap cycle; and
-  `--mflags=--nocheck` to skip check() phases that trip on perl
-  5.40+ / makepkg trap regressions. They matter when (re)building a
-  vendored `.zst`, **not** when running the image chain.
+Alpine 3.21 stable doesn't package SDL3 (dosemu2 needs SDL3, not
+SDL2) or `libb64`. Both get pulled from `edge/community` and
+`edge/testing` respectively via an explicit `--repository=` flag
+layered on top of the 3.21 base — same pattern upstream's
+Dockerfile.alpine uses for `libb64`. Phase 01 does this for the
+`-dev` packages (build time); Phase 04's `runtime` stage does it again
+for the non-dev runtime packages.
 
-## fdpp must install into libdir (post-#294)
+## Cross-cutting gotchas (Phase 04)
 
-dosemu2 git HEAD (PR #2887) removed the fdpp rpath; fdpp PR #294
-("move to libdir") correspondingly installs `libfdpp.so` /
-`libfdldr.so` into `${libdir}` (`/usr/lib`, which ldconfig searches)
-instead of `/usr/lib/fdpp`. **The two changes must move together.**
-
-The AUR *release* `fdpp` (1.9) predates #294 and installs to
-`/usr/lib/fdpp`; pairing it with current dosemu2 gives a clean build
-that crashes at runtime with `libfdpp.so.35: cannot open shared
-object file` (the soname didn't change across the move, so there's no
-build-time guard). Fix: vendor **`fdpp-git`** (HEAD, post-#294) rather
-than release `fdpp`. Caveat when building `fdpp-git`: its AUR PKGBUILD
-still lists `nasm-segelf` as a makedep though upstream HEAD switched
-to plain `nasm`, so the build needs `pacman -S nasm` plus a `-Syu` to
-dodge a stale-db 404.
-
-## Cross-cutting gotchas (Phase 05 / runtime)
-
-These broke during development and have a comment at the source
-call-site:
-
-- **`/usr/local/share/man` symlink.** archlinux:latest ships it as a
-  symlink to `../man`. dosemu2's `make install` lays down a real
-  directory there, so Phase 05's runtime stage `rm`s the symlink
-  before the `COPY --from=builder /install /`.
 - **`.git` is included in the source untar.** dosemu2's `getversion`
   script falls back to the static `VERSION` file when there's no git
   history. We tar in `.git` so the built binary reports the rich
   `2.0pre9-dev-DATE-N-gSHA` string rather than just `2.0pre9`.
-
-## Parallelism (JOBS / MAKEFLAGS)
-
-`JOBS` defaults to `$(shell nproc)` at make-time. Phase 01 bakes the
-resolved value into three places:
-
-- `/etc/makepkg.conf` MAKEFLAGS (the **only** place makepkg honors;
-  it overrides env MAKEFLAGS from its own config)
-- `/etc/profile.d/jobs.sh` (interactive shells)
-- `/etc/dosemu2-jobs.env` (sourced by every later RUN: `. /etc/dosemu2-jobs.env && export MAKEFLAGS CARGO_BUILD_JOBS && ...`)
-
-Plus `/home/builder/.cargo/config.toml` `[build] jobs` as fallback
-for any rust build that scrubs the env.
+- **Source mount is read-only.** Phase 04 untars the bind-mounted host
+  source into `/root/dosemu2` inside the builder stage before running
+  `autogen.sh` / `configure` / `make`, so the host working tree
+  doesn't get polluted with `.o` files. `git clean -dfx` runs first to
+  strip any in-tree artifacts the host tree carries (e.g. a
+  `config.status` with `/workspace` paths left by an in-tree configure
+  in the `:build-env` container).
 
 ## ARG BASE default
 
 Each Dockerfile has `ARG BASE=ghcr.io/.../dosemu2-container:<prev>`
-pointing at the GHCR-published phase it builds on — **Dockerfile.04-aur
-defaults to `:01-pacman`** (not `:03`), matching CI. So `docker build
--f Dockerfile.04-aur .` with no `--build-arg` pulls `:01-pacman` from
-GHCR and works out of the box. The Makefile overrides `BASE` with
-local tags for chained builds (Phase 04 on `TAG_01`).
+pointing at the GHCR-published phase it builds on — e.g.
+Dockerfile.02-binutils defaults to `:01-base`, Dockerfile.03-toolchain
+to `:02-binutils`, Dockerfile.04-build to `:03-toolchain`. So `docker
+build -f Dockerfile.0N-... .` with no `--build-arg` pulls the right
+previous phase from GHCR and works out of the box. The Makefile
+overrides `BASE` with local tags for chained builds.
 
 ## How the local source gets in
 
-Phase 05 uses BuildKit's `additional_contexts`:
+Phase 04 uses BuildKit's `additional_contexts`:
 
 ```yaml
 # Makefile:
@@ -154,7 +128,7 @@ Phase 05 uses BuildKit's `additional_contexts`:
 ```
 
 ```dockerfile
-# Dockerfile.05-build:
+# Dockerfile.04-build:
 RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
     ... tar /src into a scratch dir, build there ...
 ```
@@ -166,64 +140,53 @@ This keeps the host source tree clean (no `.o` files leak back).
 
 | File | Trigger | Builds |
 |---|---|---|
-| `.github/workflows/build.yml` | trunk push to `Dockerfile.01-pacman` / `.04-aur` / `.05-build` or `aur-pkgs/**`, weekly cron, dispatch | 3 sequential jobs **01→04→latest**, each `needs:` the previous; Phase 04 builds with `BASE=:01-pacman` |
+| `.github/workflows/build.yml` | trunk push to any `Dockerfile.0[1-4]-*` or `entrypoint.sh`, weekly cron, dispatch | 4 sequential jobs **01→02→03→latest**, each `needs:` the previous; the last job builds both `:latest` and `:latest-headless` targets; `:03-toolchain` / `:build-env` publishes only if `test/entrypoint-perms.sh` passes |
 | `.github/workflows/build-release.yml` | trunk push to Dockerfile.release, weekly cron, dispatch | Just `:release` |
-| `.github/workflows/build-aur-pkg.yml` | dispatch (pkg name input) | Builds one AUR pkg in `:build-env`, uploads the `.zst` as an artifact to vendor into `aur-pkgs/` |
-| `.github/workflows/ghcr-prune.yml` | weekly cron, dispatch | Deletes untagged GHCR versions via `gh api` (no third-party action) |
+| `.github/workflows/ghcr-cleaner.yml` | monthly cron (22nd), trunk push to itself, dispatch | Deletes untagged GHCR versions via `Chizkiyahu/delete-untagged-ghcr-action` |
 
 All push to GHCR using `GITHUB_TOKEN` with `permissions: packages: write`.
 `build.yml` and `build-release.yml` additionally log in to Docker Hub
 (`DOCKER_HUB_USERNAME` / `DOCKER_PAT_TOKEN`) and mirror the user-facing
-tags (`:build-env`, `:latest`, `:release`) to `andy5995/dosemu2`.
+tags (`:build-env`, `:latest`, `:latest-headless`, `:release`) to
+`andy5995/dosemu2`.
 
 ## Key files quick reference
 
 | Path | What |
 |---|---|
-| `Dockerfile.01-pacman` | Base + pacman packages + builder user + parallelism config |
-| `Dockerfile.04-aur` | Single `FROM :01-pacman`; bind-mounts `aur-pkgs/` and `pacman -U`'s it, then sets the UID-remap entrypoint. Fast. (= `:build-env`) |
-| `Dockerfile.05-build` | Multi-stage. Builder builds dosemu2; runtime is slim Arch + AUR pkgs from `/opt/aur-pkgs` + `/install` from builder |
+| `Dockerfile.01-base` | Alpine base + apk build deps (incl. SDL3/X11 GUI build deps) |
+| `Dockerfile.02-binutils` | Single `FROM :01-base`; builds `binutils-gdb` for `i686-unknown-linux-gnu` |
+| `Dockerfile.03-toolchain` | Single `FROM :02-binutils`; builds `thunk_gen`/`fdpp`/`smallerc`/`djstub`/`dj64dev`/`comcom64`/`libsearpc`, then adds the UID-remap entrypoint. (= `:build-env`) |
+| `Dockerfile.04-build` | Multi-stage. Builder builds dosemu2; two runtime stages (`runtime` / `runtime-headless`) copy `/usr/local` (toolchain runtime libs) + `/install` from the builder into fresh Alpine bases |
 | `Dockerfile.release` | Multi-stage Ubuntu + PPA build of `:release` |
-| `aur-pkgs/` | Prebuilt `.pkg.tar.zst` set (Git LFS) installed by Phase 04. See its README |
-| `Makefile` | `make all` (01→04→05) / `release` / `rebuild-aur` / `rebuild-dosemu2` / `shell` / `clean` |
+| `Makefile` | `make all` (01→02→03→04) / `headless` / `release` / `rebuild-toolchain` / `rebuild-dosemu2` / `shell` / `clean` |
 | `docker-compose.yml` | Three services from published images: `dosemu2` (text, tag `${TAG:-release}`), `gui` (X11 wired in), `build-env` (source at `/workspace` via `DOSEMU2_SRC`). Defaults to Docker Hub `andy5995/dosemu2` |
 | `.env.example` | Tracked template for compose vars (`TAG`/`IMAGE`/`DOSEMU_HOME`/`DOSEMU2_SRC`/`HOSTUID`/`HOSTGID`); copy to `.env` (gitignored) |
-| `entrypoint.sh` | `:build-env` UID-remap entrypoint: stats `/workspace` owner, remaps `builder`, honors `HOSTUID`/`HOSTGID`. Warns (doesn't fail) on a root-owned non-empty workdir |
-| `.github/workflows/build.yml` | Main chain (01→04→latest) |
-| `.github/workflows/build-aur-pkg.yml` | Build a vendored AUR pkg artifact |
+| `entrypoint.sh` | `:build-env` UID-remap entrypoint: stats `/workspace` owner, remaps `builder`, honors `HOSTUID`/`HOSTGID`. Warns (doesn't fail) on a root-owned non-empty workdir. `groupmod`/`usermod` come from the `shadow` apk package, `runuser` from `util-linux` — both installed in Phase 01 |
+| `.github/workflows/build.yml` | Main chain (01→02→03→latest/latest-headless) |
 | `.github/workflows/build-release.yml` | Release path |
-| `.github/workflows/ghcr-prune.yml` | Cleanup |
+| `.github/workflows/ghcr-cleaner.yml` | Cleanup |
+| `test/entrypoint-perms.sh` | Gates the `:03-toolchain` / `:build-env` publish; checks the UID remap |
 
 ## When making changes
 
-- **Editing Phase 01** invalidates Phase 04's base, so it cascades
-  01→04→05 — but Phase 04 is now a fast `pacman -U`, so the cascade is
-  cheap unless `aur-pkgs/` also changed.
-- **Editing Phase 04** is just the `pacman -U` step (fast). The real
-  ~30-min cost is rebuilding a *vendored package* out of band (see
-  "The aur-pkgs/ vendored set") — that's where AUR-upstream quirks and
-  the old gotchas land.
-  - **Stale-db gotcha (mostly handled now):** Phase 04 runs
-    `sudo pacman -Syu` before the `pacman -U`, so a stale db in
-    `:01-pacman` is refreshed to the live mirror on the fly instead of
-    404'ing. Background: the vendored aur-pkgs pull current versions of
-    their official-repo runtime deps, but rolling Arch mirrors drop
-    superseded packages, so a db snapshot that's even minutes behind can
-    404 on the download (seen in CI: gcc-ada, avahi; locally:
-    qt6-declarative, xkeyboard-config). The `-Syu` closes that race for
-    both CI and a weeks-old local `:01` (it just upgrades the stale base
-    first). It's not free, though — against a very old local `:01` that
-    `-Syu` becomes a large upgrade, so rebuilding `:01-pacman` first
-    (`make all` runs the chain in order) is still the faster path. To
-    exercise just the build-env *entrypoint*
-    without the full AUR install, build a throwaway image that's only
-    `FROM :01-pacman` + `COPY entrypoint.sh`; that's what
-    `test/entrypoint-perms.sh` needs (base `builder` user + remap tools).
-- **Editing Phase 05** is the dosemu2 build (~3-10 min). Iterate freely
+- **Editing Phase 01** invalidates every later phase — it's the base
+  every source build runs against.
+- **Editing Phase 02** only affects `binutils-gdb`; rarely needs
+  touching.
+- **Editing Phase 03** is where a toolchain component version bump
+  happens (e.g. pinning `dj64dev` or `comcom64` to a specific commit
+  instead of tracking HEAD via `--depth 1`).
+- **Editing Phase 04** is the dosemu2 build itself. Iterate freely
   with `make rebuild-dosemu2`.
-- **Adding a runtime-only dep** belongs in Phase 05's runtime stage's
-  pacman list, NOT Phase 01.
-- **Validating locally before push.** `make all` (01→04→05) + a smoke
-  test `docker run --rm dosemu2:latest -td -ks -E exitemu`. Or iterate
-  faster with `make rebuild-aur` (after an `aur-pkgs/` swap) or
-  `make rebuild-dosemu2` (after editing the dosemu2 source).
+- **Adding a runtime-only dep** belongs in Phase 04's runtime stage(s)
+  apk list, NOT Phase 01 (Phase 01 is build-time only).
+- **A GUI dep is a build-time (Phase 01) *and* runtime (Phase 04
+  `runtime` stage) change** — dosemu2's configure needs the `-dev`
+  package to detect and build the feature; the runtime stage needs the
+  non-dev package for the resulting `.so` to actually load.
+- **Validating locally before push.** `make all` (01→02→03→04) + a
+  smoke test `docker run --rm dosemu2:latest -td -ks -E exitemu`. Or
+  iterate faster with `make rebuild-toolchain` (after a toolchain
+  component bump) or `make rebuild-dosemu2` (after editing the dosemu2
+  source).

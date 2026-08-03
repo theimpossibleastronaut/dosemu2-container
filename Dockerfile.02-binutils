@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 02 — i686-unknown-linux-gnu binutils, built from source.
+#
+# Input:  dosemu2-builder:01-base
+# Output: dosemu2-builder:02-binutils
+#
+# The single slowest, most network-fragile step in the chain (a full
+# clone + build of binutils-gdb from sourceware.org), so it gets its
+# own phase: a transient network blip or build failure here doesn't
+# force Phase 01 or the rest of the toolchain to redo any work.
+
+ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:01-base
+
+FROM ${BASE}
+
+RUN git clone --depth 1 git://sourceware.org/git/binutils-gdb.git /root/binutils-gdb \
+ && cd /root/binutils-gdb \
+ && ./configure --target=i686-unknown-linux-gnu \
+        --disable-gdb --disable-texinfo --disable-sim --disable-gprofng \
+ && make -j"$(nproc)" \
+ && make install \
+ && rm -rf /root/binutils-gdb

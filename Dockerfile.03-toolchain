@@ -1,0 +1,71 @@
+# syntax=docker/dockerfile:1.6
+#
+# Phase 03 — the rest of dosemu2's DJGPP-alternative toolchain, built
+# from source: thunk_gen, fdpp, smallerc, djstub, dj64dev, comcom64,
+# libsearpc. Each lives in its own RUN so a change to one doesn't
+# invalidate the cache for the others.
+#
+# Input:  dosemu2-builder:02-binutils
+# Output: dosemu2-builder:03-toolchain (also tagged :build-env)
+#
+# This is the checkpoint users bind-mount their own dosemu2 source
+# into (see entrypoint.sh) — everything needed to build dosemu2 is
+# installed, but dosemu2 itself isn't built yet.
+
+ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:02-binutils
+
+FROM ${BASE}
+
+RUN git clone --depth 1 https://github.com/stsp/thunk_gen.git /root/thunk_gen \
+ && cd /root/thunk_gen \
+ && ./configure && meson compile --verbose -C build \
+ && meson install -C build \
+ && rm -rf /root/thunk_gen
+
+RUN git clone --depth 1 https://github.com/dosemu2/fdpp.git /root/fdpp \
+ && cd /root/fdpp \
+ && ./configure.meson && meson compile --verbose -C build \
+ && meson install -C build \
+ && rm -rf /root/fdpp
+
+RUN git clone --depth 1 https://github.com/alexfru/smallerc.git /root/smallerc \
+ && cd /root/smallerc \
+ && make && make install \
+ && rm -rf /root/smallerc
+
+RUN git clone --depth 1 https://github.com/stsp/djstub.git /root/djstub \
+ && cd /root/djstub \
+ && make -j"$(nproc)" && make install \
+ && rm -rf /root/djstub
+
+RUN git clone --depth 1 https://github.com/stsp/dj64dev.git /root/dj64dev \
+ && cd /root/dj64dev \
+ && ./autogen.sh \
+ && ./configure --disable-32bit --disable-ncurses \
+ && make -j"$(nproc)" && make install \
+ && rm -rf /root/dj64dev
+
+RUN git clone --depth 1 https://github.com/dosemu2/comcom64.git /root/comcom64 \
+ && cd /root/comcom64 \
+ && make static -j"$(nproc)" && make install_64 \
+ && rm -rf /root/comcom64
+
+RUN git clone --depth 1 https://github.com/haiwen/libsearpc.git /root/libsearpc \
+ && cd /root/libsearpc \
+ && ./autogen.sh && ./configure \
+ && make -j"$(nproc)" && make install \
+ && rm -rf /root/libsearpc
+
+# Runtime entrypoint: remap builder's UID/GID to match the
+# bind-mounted workspace owner so files written from inside the
+# container land on the host with correct ownership. See
+# entrypoint.sh for details. Phase 04 overrides both USER and
+# ENTRYPOINT, so this only affects the :build-env / :03-toolchain tag.
+RUN addgroup -S builder \
+ && adduser -S -G builder -s /bin/bash -h /home/builder builder
+
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["bash"]

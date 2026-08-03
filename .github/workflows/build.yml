@@ -1,22 +1,13 @@
 name: Build & push the git chain
 
-# Builds the Arch chain and pushes every phase to GHCR:
-#   :01-pacman → :04-aur (== :build-env) → :latest
+# Builds the Alpine chain and pushes every phase to GHCR:
+#   :01-base → :02-binutils → :03-toolchain (== :build-env) →
+#   :latest / :latest-headless
 #
-# Phase 04 used to compile the AUR deps via paru — ~30 min on the
-# runner for the djgpp-gcc cross-compiler alone. The aur-pkgs/
-# directory in this repo now holds those packages prebuilt (Git LFS),
-# so Phase 04 reduces to "COPY + pacman -U" and skips Phases 02
-# (paru) and 03 (djgpp-djcrx-bootstrap) entirely. Their Dockerfiles
-# are kept around as recipes for the rare case of rebuilding from
-# scratch (e.g. when a new AUR pkg's dep tree forces a paru rerun);
-# trigger them manually with `docker buildx build` locally.
-#
-# Each phase that does run is a separate job that `needs:` the
-# previous one, so a later job only starts after the earlier image
-# has actually been pushed to GHCR (and is therefore pullable as the
-# next phase's BASE). Failed phases can be re-run individually from
-# the Actions UI.
+# Each phase is a separate job that `needs:` the previous one, so a
+# later job only starts after the earlier image has actually been
+# pushed to GHCR (and is therefore pullable as the next phase's
+# BASE). Failed phases can be re-run individually from the Actions UI.
 #
 # The PPA-based :release image is built independently — see
 # build-release.yml.
@@ -25,10 +16,10 @@ on:
   push:
     branches: [trunk]
     paths:
-      - 'Dockerfile.01-pacman'
-      - 'Dockerfile.04-aur'
-      - 'Dockerfile.05-build'
-      - 'aur-pkgs/**'
+      - 'Dockerfile.01-base'
+      - 'Dockerfile.02-binutils'
+      - 'Dockerfile.03-toolchain'
+      - 'Dockerfile.04-build'
       - 'entrypoint.sh'
       - '.github/workflows/build.yml'
   workflow_dispatch:
@@ -38,10 +29,8 @@ on:
         required: false
         default: 'devel'
   schedule:
-    # Weekly refresh: picks up new Arch base packages and rebuilds
-    # :latest from the dosemu2 devel branch. Phase 04 is now just a
-    # pacman -U of the prebuilt aur-pkgs/, so the cadence is a
-    # freshness choice, not a cost constraint.
+    # Weekly refresh: picks up new Alpine base packages and rebuilds
+    # :latest from the dosemu2 devel branch.
     - cron: '30 5 * * 0'
 
 concurrency:
@@ -57,7 +46,7 @@ env:
   DH_IMAGE: docker.io/andy5995/dosemu2
 
 jobs:
-  build-01-pacman:
+  build-01-base:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -67,26 +56,43 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build & push :01-pacman
+      - name: Build & push :01-base
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile.01-pacman
+          file: ./Dockerfile.01-base
           push: true
-          tags: ${{ env.IMAGE }}:01-pacman
-          cache-from: type=registry,ref=${{ env.IMAGE }}:01-pacman
+          tags: ${{ env.IMAGE }}:01-base
+          cache-from: type=registry,ref=${{ env.IMAGE }}:01-base
           cache-to: type=inline
 
-  build-04-aur:
+  build-02-binutils:
     runs-on: ubuntu-24.04
-    needs: build-01-pacman
+    needs: build-01-base
     steps:
-      # lfs: true so the aur-pkgs/*.pkg.tar.zst files are fetched as
-      # real binaries, not the LFS pointer text — Phase 04's COPY of
-      # aur-pkgs/ would otherwise drop pointer files into the image.
       - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
-          lfs: true
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push :02-binutils
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.02-binutils
+          push: true
+          build-args: BASE=${{ env.IMAGE }}:01-base
+          tags: ${{ env.IMAGE }}:02-binutils
+          cache-from: type=registry,ref=${{ env.IMAGE }}:02-binutils
+          cache-to: type=inline
+
+  build-03-toolchain:
+    runs-on: ubuntu-24.04
+    needs: build-02-binutils
+    steps:
+      - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -98,48 +104,42 @@ jobs:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_PAT_TOKEN }}
       # Build and load locally first so the entrypoint test runs
-      # against the real image before it's published. Pushed only after
-      # the test passes (next two steps).
-      - name: Build :04-aur (also tagged :build-env)
+      # against the real image before it's published. Pushed only
+      # after the test passes (next two steps).
+      - name: Build :03-toolchain (also tagged :build-env)
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile.04-aur
+          file: ./Dockerfile.03-toolchain
           load: true
-          build-args: BASE=${{ env.IMAGE }}:01-pacman
+          build-args: BASE=${{ env.IMAGE }}:02-binutils
           # :build-env is the user-facing alias for the build
-          # environment (all deps installed, no dosemu2 binary).
-          # Same digest as :04-aur, which stays as the internal
-          # chain checkpoint name. Only :build-env is mirrored to
-          # Docker Hub; :04-aur is GHCR-only (chain BASE, never
-          # pulled from Docker Hub).
+          # environment. Same digest as :03-toolchain, which stays as
+          # the internal chain checkpoint name. Only :build-env is
+          # mirrored to Docker Hub; :03-toolchain is GHCR-only (chain
+          # BASE, never pulled from Docker Hub).
           tags: |
-            ${{ env.IMAGE }}:04-aur
+            ${{ env.IMAGE }}:03-toolchain
             ${{ env.IMAGE }}:build-env
             ${{ env.DH_IMAGE }}:build-env
-          cache-from: type=registry,ref=${{ env.IMAGE }}:04-aur
+          cache-from: type=registry,ref=${{ env.IMAGE }}:03-toolchain
 
       - name: Test build-env entrypoint permissions
-        run: IMAGE=${{ env.IMAGE }}:04-aur test/entrypoint-perms.sh
+        run: IMAGE=${{ env.IMAGE }}:03-toolchain test/entrypoint-perms.sh
 
-      - name: Push :04-aur and :build-env
+      - name: Push :03-toolchain and :build-env
         run: |
-          docker push ${{ env.IMAGE }}:04-aur
+          docker push ${{ env.IMAGE }}:03-toolchain
           docker push ${{ env.IMAGE }}:build-env
           docker push ${{ env.DH_IMAGE }}:build-env
 
   build-latest:
     runs-on: ubuntu-24.04
-    needs: build-04-aur
+    needs: build-03-toolchain
     env:
       DOSEMU2_REF: ${{ inputs.ref || 'devel' }}
     steps:
-      # lfs: true — Phase 05's runtime stage bind-mounts aur-pkgs/
-      # from the build context (same as Phase 04), so the .zst files
-      # need to be real bytes, not LFS pointers.
       - uses: actions/checkout@v7
-        with:
-          lfs: true
 
       - name: Clone dosemu2 (${{ env.DOSEMU2_REF }})
         # No --depth=1: the dosemu2 build's getversion script needs git
@@ -166,13 +166,30 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile.05-build
+          file: ./Dockerfile.04-build
+          target: runtime
           push: true
-          build-args: BASE=${{ env.IMAGE }}:04-aur
+          build-args: BASE=${{ env.IMAGE }}:03-toolchain
           build-contexts: |
             dosemu2=./dosemu2-src
           tags: |
             ${{ env.IMAGE }}:latest
             ${{ env.DH_IMAGE }}:latest
           cache-from: type=registry,ref=${{ env.IMAGE }}:latest
+          cache-to: type=inline
+
+      - name: Build & push :latest-headless
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.04-build
+          target: runtime-headless
+          push: true
+          build-args: BASE=${{ env.IMAGE }}:03-toolchain
+          build-contexts: |
+            dosemu2=./dosemu2-src
+          tags: |
+            ${{ env.IMAGE }}:latest-headless
+            ${{ env.DH_IMAGE }}:latest-headless
+          cache-from: type=registry,ref=${{ env.IMAGE }}:latest-headless
           cache-to: type=inline

@@ -6,13 +6,13 @@
 # script exercises that across the cases that matter for permissions.
 #
 # Builds nothing — point IMAGE at the build-env image under test:
-#   IMAGE=dosemu2-builder:04-aur test/entrypoint-perms.sh
+#   IMAGE=dosemu2-builder:03-toolchain test/entrypoint-perms.sh
 # Defaults to the local `make` tag. Needs Docker; no host root needed
 # (root-owned fixtures are created via throwaway containers).
 
 set -u
 
-IMAGE="${IMAGE:-dosemu2-builder:04-aur}"
+IMAGE="${IMAGE:-dosemu2-builder:03-toolchain}"
 fails=0
 work="$(mktemp -d)"
 
