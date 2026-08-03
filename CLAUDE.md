@@ -84,9 +84,9 @@ So Phase 04 has two builder stages:
 
 - `builder` — full toolchain, GUI/audio autodetected. Feeds `runtime`
   (`:latest`).
-- `builder-headless` — `apk del`s the GUI/audio `-dev` packages before
-  `./configure`, so `PLUGINSUBDIRS` omits X, Xkmaps, sdl, sdl3, alsa,
-  ladspa, gpm, libao and fluidsynth. Feeds `runtime-headless`
+- `builder-headless` — runs `apk del` on the GUI/audio `-dev` packages
+  before `./configure`, so `PLUGINSUBDIRS` omits X, Xkmaps, sdl, sdl3,
+  alsa, ladspa, gpm, libao and fluidsynth. Feeds `runtime-headless`
   (`:latest-headless`).
 
 The cost is a second dosemu2 compile; the benefit is a headless image
