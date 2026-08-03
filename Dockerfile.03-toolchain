@@ -11,47 +11,76 @@
 # This is the checkpoint users bind-mount their own dosemu2 source
 # into (see entrypoint.sh) — everything needed to build dosemu2 is
 # installed, but dosemu2 itself isn't built yet.
+#
+# Every component is pinned to a commit rather than cloned at its
+# default-branch HEAD. Upstream's Dockerfile.alpine tracks HEAD, which
+# makes a build unreproducible and lets an unrelated upstream push
+# break :build-env and every image below it. Bump a pin by editing the
+# ARG default, or override one to test:
+#   docker build --build-arg FDPP_REF=<sha> ...
+#
+# These move with dosemu2 itself, so a :latest built from a much newer
+# dosemu2 devel may need some of them bumped together.
 
 ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:02-binutils
 
 FROM ${BASE}
 
-RUN git clone --depth 1 https://github.com/stsp/thunk_gen.git /root/thunk_gen \
- && cd /root/thunk_gen \
+# Pins as of 2026-08-03.
+ARG THUNK_GEN_REF=4967a317e97167640d524f66860908fcb0d88fa8
+ARG FDPP_REF=3c2dd80cc1ca152d26e35539c821cc7086537023
+ARG SMALLERC_REF=1865d79ce7a5ad3f8a9515a571437cee084b8b1d
+ARG DJSTUB_REF=f002e47f1d579e52e5162efbe8ae3e6308c67258
+ARG DJ64DEV_REF=fc40c12a481c44fa19757dfd753962157281d390
+ARG COMCOM64_REF=7d72f64bf327fb78f504498ac81e21bd57368904
+ARG LIBSEARPC_REF=23d5df62815fb3b7825bf4e1a28b29af701e8cb2
+
+# `git init` + `fetch --depth 1 <sha>` rather than `clone --branch`:
+# --branch only accepts a branch or tag name, and these are commits.
+# The fetch stays shallow, so pinning costs no extra history.
+RUN mkdir -p /root/thunk_gen && cd /root/thunk_gen \
+ && git init -q && git remote add origin https://github.com/stsp/thunk_gen.git \
+ && git fetch -q --depth 1 origin "${THUNK_GEN_REF}" && git checkout -q FETCH_HEAD \
  && ./configure && meson compile --verbose -C build \
  && meson install -C build \
  && rm -rf /root/thunk_gen
 
-RUN git clone --depth 1 https://github.com/dosemu2/fdpp.git /root/fdpp \
- && cd /root/fdpp \
+RUN mkdir -p /root/fdpp && cd /root/fdpp \
+ && git init -q && git remote add origin https://github.com/dosemu2/fdpp.git \
+ && git fetch -q --depth 1 origin "${FDPP_REF}" && git checkout -q FETCH_HEAD \
  && ./configure.meson && meson compile --verbose -C build \
  && meson install -C build \
  && rm -rf /root/fdpp
 
-RUN git clone --depth 1 https://github.com/alexfru/smallerc.git /root/smallerc \
- && cd /root/smallerc \
+RUN mkdir -p /root/smallerc && cd /root/smallerc \
+ && git init -q && git remote add origin https://github.com/alexfru/smallerc.git \
+ && git fetch -q --depth 1 origin "${SMALLERC_REF}" && git checkout -q FETCH_HEAD \
  && make && make install \
  && rm -rf /root/smallerc
 
-RUN git clone --depth 1 https://github.com/stsp/djstub.git /root/djstub \
- && cd /root/djstub \
+RUN mkdir -p /root/djstub && cd /root/djstub \
+ && git init -q && git remote add origin https://github.com/stsp/djstub.git \
+ && git fetch -q --depth 1 origin "${DJSTUB_REF}" && git checkout -q FETCH_HEAD \
  && make -j"$(nproc)" && make install \
  && rm -rf /root/djstub
 
-RUN git clone --depth 1 https://github.com/stsp/dj64dev.git /root/dj64dev \
- && cd /root/dj64dev \
+RUN mkdir -p /root/dj64dev && cd /root/dj64dev \
+ && git init -q && git remote add origin https://github.com/stsp/dj64dev.git \
+ && git fetch -q --depth 1 origin "${DJ64DEV_REF}" && git checkout -q FETCH_HEAD \
  && ./autogen.sh \
  && ./configure --disable-32bit --disable-ncurses \
  && make -j"$(nproc)" && make install \
  && rm -rf /root/dj64dev
 
-RUN git clone --depth 1 https://github.com/dosemu2/comcom64.git /root/comcom64 \
- && cd /root/comcom64 \
+RUN mkdir -p /root/comcom64 && cd /root/comcom64 \
+ && git init -q && git remote add origin https://github.com/dosemu2/comcom64.git \
+ && git fetch -q --depth 1 origin "${COMCOM64_REF}" && git checkout -q FETCH_HEAD \
  && make static -j"$(nproc)" && make install_64 \
  && rm -rf /root/comcom64
 
-RUN git clone --depth 1 https://github.com/haiwen/libsearpc.git /root/libsearpc \
- && cd /root/libsearpc \
+RUN mkdir -p /root/libsearpc && cd /root/libsearpc \
+ && git init -q && git remote add origin https://github.com/haiwen/libsearpc.git \
+ && git fetch -q --depth 1 origin "${LIBSEARPC_REF}" && git checkout -q FETCH_HEAD \
  && ./autogen.sh && ./configure \
  && make -j"$(nproc)" && make install \
  && rm -rf /root/libsearpc

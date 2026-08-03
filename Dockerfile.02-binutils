@@ -14,7 +14,16 @@ ARG BASE=ghcr.io/theimpossibleastronaut/dosemu2-container:01-base
 
 FROM ${BASE}
 
-RUN git clone --depth 1 git://sourceware.org/git/binutils-gdb.git /root/binutils-gdb \
+# Pinned to a binutils *release* tag rather than tracking master.
+# Upstream's Dockerfile.alpine clones master HEAD, which is a
+# development trunk: a bad commit there breaks every image downstream,
+# and a build that worked yesterday can't be reproduced. Override to
+# test a newer release:
+#   docker build --build-arg BINUTILS_REF=binutils-2_48 ...
+ARG BINUTILS_REF=binutils-2_47
+
+RUN git clone --depth 1 --branch "${BINUTILS_REF}" \
+        git://sourceware.org/git/binutils-gdb.git /root/binutils-gdb \
  && cd /root/binutils-gdb \
  && ./configure --target=i686-unknown-linux-gnu \
         --disable-gdb --disable-texinfo --disable-sim --disable-gprofng \

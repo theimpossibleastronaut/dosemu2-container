@@ -216,8 +216,16 @@ tags (`:build-env`, `:latest`, `:latest-headless`, `:release`) to
 - **Editing Phase 02** only affects `binutils-gdb`; rarely needs
   touching.
 - **Editing Phase 03** is where a toolchain component version bump
-  happens (e.g. pinning `dj64dev` or `comcom64` to a specific commit
-  instead of tracking HEAD via `--depth 1`).
+  happens. Every component is pinned to a commit SHA in an overridable
+  `ARG` (`FDPP_REF`, `DJ64DEV_REF`, `COMCOM64_REF`, …), fetched with
+  `git init` + `git fetch --depth 1 <sha>` because `clone --branch`
+  only takes branch/tag names. Phase 02 pins binutils to a release tag
+  (`BINUTILS_REF`) instead, which `clone --branch` handles directly.
+  To bump one, edit the `ARG` default; to test first, pass
+  `--build-arg <NAME>_REF=<sha>`. Because these track dosemu2 itself,
+  a `:latest` built from much newer dosemu2 `devel` may need several
+  bumped together — that's the tradeoff pinning buys against an
+  unrelated upstream push breaking the chain.
 - **Editing Phase 04** is the dosemu2 build itself. Iterate freely
   with `make rebuild-dosemu2`.
 - **Adding a runtime-only dep** belongs in Phase 04's runtime stage(s)

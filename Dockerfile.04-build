@@ -83,7 +83,8 @@ RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
  && mkdir -p /root/dosemu2 \
  && (cd /src && tar -cf - .) | tar -xf - -C /root/dosemu2 \
  && cd /root/dosemu2 \
- && git clean -dfx \
+ && if git rev-parse --git-dir >/dev/null 2>&1; then git clean -dfx; \
+    else echo "source has no usable .git; skipping git clean"; fi \
  && ./autogen.sh \
  && ./configure \
  && make -j"$(nproc)" \
@@ -123,7 +124,8 @@ RUN --mount=type=bind,from=dosemu2,target=/src,readonly \
  && mkdir -p /root/dosemu2 \
  && (cd /src && tar -cf - .) | tar -xf - -C /root/dosemu2 \
  && cd /root/dosemu2 \
- && git clean -dfx \
+ && if git rev-parse --git-dir >/dev/null 2>&1; then git clean -dfx; \
+    else echo "source has no usable .git; skipping git clean"; fi \
  && ./autogen.sh \
  && ./configure \
  && make -j"$(nproc)" \

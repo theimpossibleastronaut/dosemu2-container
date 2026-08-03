@@ -329,6 +329,21 @@ in the same repo), and mirror the user-facing tags to Docker Hub.
   the chain, so it's isolated in Phase 02 — a failure there doesn't
   force Phase 01 or the rest of the toolchain (Phase 03) to redo any
   work.
+- **Every toolchain component is pinned.** Upstream's
+  `Dockerfile.alpine` clones each one at its default-branch `HEAD`,
+  which makes a build unreproducible and lets an unrelated upstream
+  push break `:build-env` and every image below it. Phase 02 pins
+  binutils to a release tag (`BINUTILS_REF`); Phase 03 pins the seven
+  GitHub components to commit SHAs (`FDPP_REF`, `DJ64DEV_REF`, …).
+  Each is an overridable `ARG`, so testing a newer one is a
+  `--build-arg` away:
+
+  ```sh
+  docker buildx build --build-arg FDPP_REF=<sha> -f Dockerfile.03-toolchain .
+  ```
+
+  These components move with dosemu2 itself, so building `:latest`
+  from a much newer dosemu2 `devel` may need several bumped together.
 - **`/usr/local` gets pruned before the runtime `COPY`.** `:03-toolchain`
   keeps its full `/usr/local` — binutils cross-tools, `dj64dev`/smallerc
   headers and static archives, locale/info/man data — because

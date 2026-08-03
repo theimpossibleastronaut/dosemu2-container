@@ -122,7 +122,17 @@ jobs:
             ${{ env.IMAGE }}:03-toolchain
             ${{ env.IMAGE }}:build-env
             ${{ env.DH_IMAGE }}:build-env
-          cache-from: type=registry,ref=${{ env.IMAGE }}:03-toolchain
+          # Registry cache, not inline. Inline cache rides along in the
+          # pushed image manifest, but this job builds with `load: true`
+          # and only pushes later, with `docker push`, once the
+          # entrypoint test has passed — so buildx never publishes an
+          # inline manifest and every run recompiled the whole
+          # from-source toolchain. A dedicated cache ref is written at
+          # build time regardless of how the image itself ships.
+          # mode=max keeps the per-component layers, so bumping one
+          # pinned component doesn't rebuild the other six.
+          cache-from: type=registry,ref=${{ env.IMAGE }}:03-toolchain-buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:03-toolchain-buildcache,mode=max
 
       - name: Test build-env entrypoint permissions
         run: IMAGE=${{ env.IMAGE }}:03-toolchain test/entrypoint-perms.sh
